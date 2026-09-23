@@ -8,7 +8,12 @@ namespace SimplePrint.Client.Service;
 
 public sealed class ClientWorker : BackgroundService
 {
-    private sealed record Endpoint(IPAddress Address, int GatewayPort, DateTimeOffset SeenAt, string ServerName);
+    private sealed record Endpoint(
+        IPAddress Address,
+        int GatewayPort,
+        DateTimeOffset SeenAt,
+        string ServerName,
+        int ProtocolVersion);
 
     private sealed class ListenerState
     {
@@ -173,7 +178,8 @@ public sealed class ClientWorker : BackgroundService
                     server.Address,
                     server.Announcement.GatewayPort,
                     server.SeenAt,
-                    server.Announcement.ServerName);
+                    server.Announcement.ServerName,
+                    server.Announcement.Version);
             }
         }
         catch (OperationCanceledException)
