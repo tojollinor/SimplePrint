@@ -50,7 +50,8 @@ jobs:
           $exists = $null -ne ($releases | Where-Object { $_.tagName -eq $tag } | Select-Object -First 1)
 
           if ($exists) {
-            gh release upload $tag "$($installer.FullName)" --clobber
+            gh release delete-asset $tag $installer.Name -y 2>$null
+            gh release upload $tag "$($installer.FullName)"
           }
           else {
             gh release create $tag "$($installer.FullName)" `
