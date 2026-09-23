@@ -172,6 +172,7 @@ public sealed class MainForm : Form
 
     private TabPage CreateJobsTab()
     {
+        _jobs.Columns.Add("id", "Job-ID");
         _jobs.Columns.Add("time", "Zeit");
         _jobs.Columns.Add("client", "Client");
         _jobs.Columns.Add("printer", "Drucker");
@@ -432,6 +433,7 @@ public sealed class MainForm : Form
         foreach (var job in jobs.OrderByDescending(x => x.CreatedAt).Take(150))
         {
             var row = _jobs.Rows.Add(
+                job.JobId.ToString("N")[..8],
                 job.CreatedAt.ToLocalTime().ToString("dd.MM. HH:mm:ss"),
                 job.ClientName,
                 job.PrinterName,
@@ -542,7 +544,7 @@ public sealed class MainForm : Form
         else
         {
             foreach (var job in recent)
-                lines.Add($"{job.CreatedAt.ToLocalTime():HH:mm:ss} · {job.PrinterName} · {job.Status} · {job.Message}");
+                lines.Add($"{job.JobId.ToString("N")[..8]} · {job.CreatedAt.ToLocalTime():HH:mm:ss} · {job.PrinterName} · {job.Status} · {job.Message}");
         }
 
         SetStatus("✓ Client-Schnelldiagnose erstellt.");
