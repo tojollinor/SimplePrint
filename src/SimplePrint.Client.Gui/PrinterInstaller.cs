@@ -3,6 +3,13 @@ using SimplePrint.Common;
 
 namespace SimplePrint.Client.Gui;
 
+internal sealed class LocalPrinterReadiness
+{
+    public bool Ready { get; set; }
+    public string Detail { get; set; } = "";
+    public List<string> Warnings { get; set; } = [];
+}
+
 internal static class PrinterInstaller
 {
     public static async Task<List<string>> GetDriverNamesAsync()
@@ -68,6 +75,58 @@ if($portObject) {{
 }}
 ";
         return PrivilegeHelper.RunPowerShellElevatedAsync(script);
+    }
+
+    public static async Task<LocalPrinterReadiness> GetLocalReadinessAsync(
+        ClientPrinterMapping mapping)
+    {
+        var script = $@"
+$printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+$port={PowerShellRunner.Quote(mapping.PortName)}
+$proxyPort={mapping.LocalProxyPort}
+
+$svc = Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue
+$p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+$pp = Get-PrinterPort -Name $port -ErrorAction SilentlyContinue
+$listen = Get-NetTCPConnection -State Listen -LocalPort $proxyPort -ErrorAction SilentlyContinue
+
+$warnings = @()
+if(-not $svc -or [string]$svc.Status -ne 'Running') {{ $warnings += 'SimplePrint Client-Agent läuft nicht.' }}
+if(-not $p) {{ $warnings += 'Windows-Druckerqueue fehlt.' }}
+elseif($p.PortName -ne $port) {{ $warnings += 'Windows-Drucker verwendet nicht den erwarteten SimplePrint-Port.' }}
+
+if(-not $pp) {{ $warnings += 'SimplePrint-Druckerport fehlt.' }}
+if(-not $listen) {{ $warnings += 'Lokaler SimplePrint-Proxy lauscht nicht auf Port ' + $proxyPort + '.' }}
+
+if($p -and ([string]$p.DriverName -match 'Class Driver|Type1 Class|Type 1 Class|Microsoft IPP')) {{
+  $warnings += 'Generischer/Class-Treiber erkannt. Hersteller-PCL6/PS wird für RAW-Druck empfohlen.'
+}}
+
+[pscustomobject]@{{
+  Ready = ($warnings.Count -eq 0)
+  Detail = 'Dienst=' + $(if($svc){{[string]$svc.Status}}else{{'fehlt'}}) +
+           '; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
+           '; Port=' + $(if($pp){{'vorhanden'}}else{{'fehlt'}}) +
+           '; Proxy=' + $(if($listen){{'lauscht'}}else{{'nicht aktiv'}})
+  Warnings = @($warnings)
+}} | ConvertTo-Json -Compress
+";
+
+        var r = await PowerShellRunner.RunAsync(script);
+        if (r.ExitCode != 0)
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(r.StdErr)
+                    ? "Lokale Druckbereitschaft konnte nicht geprüft werden."
+                    : r.StdErr.Trim());
+
+        return JsonSerializer.Deserialize<LocalPrinterReadiness>(
+                   r.StdOut,
+                   JsonStore.Options)
+               ?? new LocalPrinterReadiness
+               {
+                   Ready = false,
+                   Detail = "Keine lokalen Statusdaten erhalten."
+               };
     }
 
     public static async Task<string> GetQuickDiagnosisAsync(ClientPrinterMapping mapping)
