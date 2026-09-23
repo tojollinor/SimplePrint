@@ -1,5 +1,5 @@
 #define MyAppName "SimplePrint"
-#define MyAppVersion "0.1.5"
+#define MyAppVersion "0.1.6"
 #define MyAppPublisher "SimplePrint"
 #define RootDir ".."
 
@@ -19,8 +19,8 @@ OutputBaseFilename=SimplePrint-Setup-{#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile={#RootDir}\assets\app-0.1.5.ico
-UninstallDisplayIcon={app}\assets\app-0.1.5.ico
+SetupIconFile={#RootDir}\assets\app-0.1.6.ico
+UninstallDisplayIcon={app}\assets\app-0.1.6.ico
 UninstallDisplayName=SimplePrint
 Uninstallable=yes
 CreateUninstallRegKey=yes
@@ -39,18 +39,18 @@ Source: "{#RootDir}\dist\Client\Service\*"; DestDir: "{app}\Client\Service"; Fla
 Source: "{#RootDir}\dist\Client\Gui\*"; DestDir: "{app}\Client\Gui"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: client
 Source: "{#RootDir}\installer\Install-Component.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "{#RootDir}\assets\logo.png"; DestDir: "{app}\assets"; DestName: "logo.png"; Flags: ignoreversion onlyifdoesntexist
-Source: "{#RootDir}\assets\app-0.1.5.ico"; DestDir: "{app}\assets"; DestName: "app-0.1.5.ico"; Flags: ignoreversion
+Source: "{#RootDir}\assets\app-0.1.6.ico"; DestDir: "{app}\assets"; DestName: "app-0.1.6.ico"; Flags: ignoreversion
 
 [Registry]
 Root: HKLM64; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SimplePrintServerGui"; ValueData: """{app}\Server\Gui\SimplePrint.Server.Gui.exe"" --tray"; Flags: uninsdeletevalue; Components: server
 Root: HKLM64; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SimplePrintClientGui"; ValueData: """{app}\Client\Gui\SimplePrint.Client.Gui.exe"" --tray"; Flags: uninsdeletevalue; Components: client
 
 [Icons]
-Name: "{group}\SimplePrint Server"; Filename: "{app}\Server\Gui\SimplePrint.Server.Gui.exe"; IconFilename: "{app}\assets\app-0.1.5.ico"; Components: server
-Name: "{group}\SimplePrint Client"; Filename: "{app}\Client\Gui\SimplePrint.Client.Gui.exe"; IconFilename: "{app}\assets\app-0.1.5.ico"; Components: client
-Name: "{group}\SimplePrint deinstallieren"; Filename: "{uninstallexe}"; IconFilename: "{app}\assets\app-0.1.5.ico"
-Name: "{commondesktop}\SimplePrint Server"; Filename: "{app}\Server\Gui\SimplePrint.Server.Gui.exe"; IconFilename: "{app}\assets\app-0.1.5.ico"; Components: server; Tasks: desktopicon
-Name: "{commondesktop}\SimplePrint Client"; Filename: "{app}\Client\Gui\SimplePrint.Client.Gui.exe"; IconFilename: "{app}\assets\app-0.1.5.ico"; Components: client; Tasks: desktopicon
+Name: "{group}\SimplePrint Server"; Filename: "{app}\Server\Gui\SimplePrint.Server.Gui.exe"; IconFilename: "{app}\assets\app-0.1.6.ico"; Components: server
+Name: "{group}\SimplePrint Client"; Filename: "{app}\Client\Gui\SimplePrint.Client.Gui.exe"; IconFilename: "{app}\assets\app-0.1.6.ico"; Components: client
+Name: "{group}\SimplePrint deinstallieren"; Filename: "{uninstallexe}"; IconFilename: "{app}\assets\app-0.1.6.ico"
+Name: "{commondesktop}\SimplePrint Server"; Filename: "{app}\Server\Gui\SimplePrint.Server.Gui.exe"; IconFilename: "{app}\assets\app-0.1.6.ico"; Components: server; Tasks: desktopicon
+Name: "{commondesktop}\SimplePrint Client"; Filename: "{app}\Client\Gui\SimplePrint.Client.Gui.exe"; IconFilename: "{app}\assets\app-0.1.6.ico"; Components: client; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Desktop-Verknüpfung erstellen"; GroupDescription: "Zusätzliche Symbole:"; Flags: unchecked
