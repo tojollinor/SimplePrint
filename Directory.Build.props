@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>Tobi / OpenAI</Authors>
+    <Company>SimplePrint</Company>
+    <Product>SimplePrint</Product>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+</Project>

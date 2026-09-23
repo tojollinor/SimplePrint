@@ -1,0 +1,70 @@
+using System.Net;
+
+namespace SimplePrint.Common;
+
+public sealed class ServerConfig
+{
+    public Guid ServerId { get; set; } = Guid.NewGuid();
+    public string ServerName { get; set; } = Environment.MachineName;
+    public int DiscoveryPort { get; set; } = Protocol.DefaultDiscoveryPort;
+    public int GatewayPort { get; set; } = Protocol.DefaultGatewayPort;
+    public List<SharedPrinterConfig> Printers { get; set; } = [];
+}
+
+public sealed class SharedPrinterConfig
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string QueueName { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string DriverName { get; set; } = "";
+    public bool Enabled { get; set; } = true;
+}
+
+public sealed class ClientConfig
+{
+    public int DiscoveryPort { get; set; } = Protocol.DefaultDiscoveryPort;
+    public int LocalPortStart { get; set; } = 19100;
+    public int LocalPortEnd { get; set; } = 19999;
+    public List<ClientPrinterMapping> Mappings { get; set; } = [];
+}
+
+public sealed class ClientPrinterMapping
+{
+    public Guid ServerId { get; set; }
+    public Guid PrinterId { get; set; }
+    public string ServerName { get; set; } = "";
+    public string PrinterDisplayName { get; set; } = "";
+    public string LocalPrinterName { get; set; } = "";
+    public string DriverName { get; set; } = "";
+    public string PortName { get; set; } = "";
+    public int LocalProxyPort { get; set; }
+    public bool Enabled { get; set; } = true;
+}
+
+public sealed class DiscoveryAnnouncement
+{
+    public string Magic { get; set; } = Protocol.DiscoveryResponseMagic;
+    public int Version { get; set; } = Protocol.Version;
+    public Guid ServerId { get; set; }
+    public string ServerName { get; set; } = "";
+    public int GatewayPort { get; set; }
+    public List<DiscoveredPrinter> Printers { get; set; } = [];
+}
+
+public sealed class DiscoveredPrinter
+{
+    public Guid Id { get; set; }
+    public string DisplayName { get; set; } = "";
+    public string DriverName { get; set; } = "";
+    public string Status { get; set; } = "Unknown";
+}
+
+public sealed record DiscoveredServer(DiscoveryAnnouncement Announcement, IPAddress Address, DateTimeOffset SeenAt);
+
+public sealed class LocalPrinterInfo
+{
+    public string Name { get; set; } = "";
+    public string DriverName { get; set; } = "";
+    public string PortName { get; set; } = "";
+    public string PrinterStatus { get; set; } = "";
+}

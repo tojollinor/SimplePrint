@@ -1,0 +1,42 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplePrint.Common", "src\SimplePrint.Common\SimplePrint.Common.csproj", "{3E0E8F3C-4F8E-4C73-A0E6-1A128FCB5A91}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplePrint.Server.Service", "src\SimplePrint.Server.Service\SimplePrint.Server.Service.csproj", "{3F7E5B0D-1A13-4B07-98E3-BDB5B2AC82E2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplePrint.Server.Gui", "src\SimplePrint.Server.Gui\SimplePrint.Server.Gui.csproj", "{B59D1042-B111-4F6C-B9BC-04F258A8498E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplePrint.Client.Service", "src\SimplePrint.Client.Service\SimplePrint.Client.Service.csproj", "{E3377203-769F-447D-B843-2C7F46F92F52}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplePrint.Client.Gui", "src\SimplePrint.Client.Gui\SimplePrint.Client.Gui.csproj", "{9A18D272-82F3-449D-8C10-6AA0A67C86B2}"
+EndProject
+Global
+  GlobalSection(SolutionConfigurationPlatforms) = preSolution
+    Debug|Any CPU = Debug|Any CPU
+    Release|Any CPU = Release|Any CPU
+  EndGlobalSection
+  GlobalSection(ProjectConfigurationPlatforms) = postSolution
+    {3E0E8F3C-4F8E-4C73-A0E6-1A128FCB5A91}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {3E0E8F3C-4F8E-4C73-A0E6-1A128FCB5A91}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {3E0E8F3C-4F8E-4C73-A0E6-1A128FCB5A91}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {3E0E8F3C-4F8E-4C73-A0E6-1A128FCB5A91}.Release|Any CPU.Build.0 = Release|Any CPU
+    {3F7E5B0D-1A13-4B07-98E3-BDB5B2AC82E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {3F7E5B0D-1A13-4B07-98E3-BDB5B2AC82E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {3F7E5B0D-1A13-4B07-98E3-BDB5B2AC82E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {3F7E5B0D-1A13-4B07-98E3-BDB5B2AC82E2}.Release|Any CPU.Build.0 = Release|Any CPU
+    {B59D1042-B111-4F6C-B9BC-04F258A8498E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {B59D1042-B111-4F6C-B9BC-04F258A8498E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {B59D1042-B111-4F6C-B9BC-04F258A8498E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {B59D1042-B111-4F6C-B9BC-04F258A8498E}.Release|Any CPU.Build.0 = Release|Any CPU
+    {E3377203-769F-447D-B843-2C7F46F92F52}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {E3377203-769F-447D-B843-2C7F46F92F52}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {E3377203-769F-447D-B843-2C7F46F92F52}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {E3377203-769F-447D-B843-2C7F46F92F52}.Release|Any CPU.Build.0 = Release|Any CPU
+    {9A18D272-82F3-449D-8C10-6AA0A67C86B2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {9A18D272-82F3-449D-8C10-6AA0A67C86B2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {9A18D272-82F3-449D-8C10-6AA0A67C86B2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {9A18D272-82F3-449D-8C10-6AA0A67C86B2}.Release|Any CPU.Build.0 = Release|Any CPU
+  EndGlobalSection
+EndGlobal

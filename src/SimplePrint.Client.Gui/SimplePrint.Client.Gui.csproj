@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\assets\app.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SimplePrint.Common\SimplePrint.Common.csproj" />
+    <EmbeddedResource Include="..\..\assets\logo.png" Link="Assets\default-logo.png" LogicalName="SimplePrint.DefaultLogo.png" />
+  </ItemGroup>
+</Project>

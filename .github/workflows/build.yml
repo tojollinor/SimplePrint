@@ -1,0 +1,32 @@
+name: Build SimplePrint
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build
+        shell: powershell
+        run: .\build.ps1
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimplePrint-Installer
+          path: dist/Installer/*.exe
+      - name: Upload published binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimplePrint-Published
+          path: |
+            dist/Server/**
+            dist/Client/**
