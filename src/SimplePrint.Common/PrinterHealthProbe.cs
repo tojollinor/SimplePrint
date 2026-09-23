@@ -71,8 +71,7 @@ public static class PrinterHealthProbe
 
         var validMicrosoftDirect =
             PrinterTransport.IsMicrosoftIppClassDriver(queue.DriverName) &&
-            (queue.PortName.StartsWith("WSD-", StringComparison.OrdinalIgnoreCase) ||
-             !string.IsNullOrWhiteSpace(queue.DeviceAddress));
+            !PrinterTransport.IsSimplePrintPort(queue.PortName);
 
         if (IsGenericClassDriver(queue.DriverName) && !validMicrosoftDirect)
         {

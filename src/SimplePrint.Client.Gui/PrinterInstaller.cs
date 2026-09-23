@@ -43,7 +43,7 @@ Add-PrinterDriver -Name $driver -ErrorAction Stop
             var directScript = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $address={PowerShellRunner.Quote(mapping.DirectAddress)}
-$uuid={PowerShellRunner.Quote(mapping.DeviceUuid)}
+$tag={PowerShellRunner.Quote($"SimplePrint:{mapping.ServerId:N}:{mapping.PrinterId:N}")}
 
 if([string]::IsNullOrWhiteSpace($address)) {{
   throw 'Für den Direktdruck wurde keine Geräteadresse übermittelt.'
@@ -55,13 +55,9 @@ if($existing) {{
 }}
 
 if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison.OrdinalIgnoreCase) ? "$true" : "$false")}) {{
-  Add-Printer -Name $printer -IppURL $address -ErrorAction Stop
+  Add-Printer -Name $printer -IppURL $address -Comment $tag -ErrorAction Stop
 }} else {{
-  if([string]::IsNullOrWhiteSpace($uuid)) {{
-    Add-Printer -Name $printer -DeviceURL $address -ErrorAction Stop
-  }} else {{
-    Add-Printer -Name $printer -DeviceURL $address -DeviceUUID $uuid -ErrorAction Stop
-  }}
+  Add-Printer -Name $printer -DeviceURL $address -Comment $tag -ErrorAction Stop
 }}
 
 if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{
@@ -98,10 +94,15 @@ if($existing) {{
     {
         if (PrinterTransport.IsDirect(mapping.TransportMode))
         {
+            var tag = $"SimplePrint:{mapping.ServerId:N}:{mapping.PrinterId:N}";
             var directScript = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+$tag={PowerShellRunner.Quote(tag)}
 $existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 if($existing) {{
+  if([string]$existing.Comment -ne $tag) {{
+    throw ('Der direkte Drucker ' + $printer + ' trägt nicht die erwartete SimplePrint-Kennung. Er wird aus Sicherheitsgründen nicht gelöscht.')
+  }}
   Remove-Printer -Name $printer -ErrorAction Stop
 }}
 ";

@@ -152,7 +152,7 @@ public sealed class MainForm : Form
         _installed.Columns.Add("printer", "Installierter Drucker");
         _installed.Columns.Add("server", "Server");
         _installed.Columns.Add("driver", "Treiber");
-        _installed.Columns.Add("port", "Lokaler Proxy-Port");
+        _installed.Columns.Add("port", "Druckpfad");
 
         _jobs.Columns.Add("id", "Job-ID");
         _jobs.Columns.Add("time", "Zeit");
@@ -226,7 +226,7 @@ public sealed class MainForm : Form
             Dock = DockStyle.Top,
             Height = 48,
             Padding = new Padding(10),
-            Text = "Statuskette: Windows-Warteschlange → lokaler Proxy → Server → Server-Spooler → Druckerstatus."
+            Text = "Tunnel-Jobs: Windows → lokaler Proxy → Server → Server-Spooler. Direkte IPP/WSD-Jobs gehen unmittelbar zum Gerät und erscheinen nicht in dieser Tunnel-Historie."
         };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         buttons.Controls.Add(MakeButton("Aktualisieren", (_, _) => RefreshJobsGrid()));

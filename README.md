@@ -60,7 +60,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 Die veröffentlichten Programme landen in `dist\`. Wenn Inno Setup vorhanden ist, entsteht zusätzlich:
 
 ```text
-dist\Installer\SimplePrint-Setup-0.2.0.exe
+dist\Installer\SimplePrint-Setup-0.2.1.exe
 ```
 
 ## Diagnose
@@ -85,7 +85,7 @@ Beim Brother DCP-L2510D muss der Client bei einer Class-Driver-Freigabe **densel
 
 ## Stand
 
-Die aktuelle Fassung ist `0.2.1`. Sie ergänzt direkten IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung und einen harten Schutz gegen rekursive SimplePrint-Druckschleifen. Die End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
+Die aktuelle Fassung ist `0.2.1`. Sie ergänzt direkten IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung und einen harten Schutz gegen rekursive SimplePrint-Druckschleifen. Enthalten ist außerdem die End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
 
 Zusätzlich enthalten sind Versions-/Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Druckauftrags-Historienverwaltung, erweiterte Diagnosepakete, generische Class-Driver-Warnungen und Ampelstatus im Tray.
 
@@ -115,7 +115,7 @@ Windows-Warteschlange
 
 Hinweis: **„Gedruckt“** wird nur angezeigt, wenn der Windows-Spooler diesen Status tatsächlich meldet. Verschwindet ein Auftrag nach erfolgreicher Übergabe aus der Warteschlange, ohne dass der Drucker einen separaten Printed-Status liefert, zeigt SimplePrint **„Abgeschlossen“**. Das bestätigt den Abschluss im Windows-Drucksystem, nicht mechanisch das Vorhandensein eines Blattes im Ausgabefach.
 
-Der Microsoft IPP Class Driver wird nicht mehr über den RAW-Tunnel betrieben, sobald der Server eine direkte IPP-/WSD-Geräteadresse liefern kann. Class-Driver, die weiterhin den Tunnel nutzen, müssen auf Client und Server exakt übereinstimmen.
+Der Microsoft IPP Class Driver wird nicht mehr über den RAW-Tunnel betrieben, sobald der Server eine direkte IPP-/WSD-Geräteadresse liefern kann. Diese direkten Druckaufträge laufen nicht durch das SimplePrint-Gateway und erscheinen deshalb nicht in der Tunnel-Jobhistorie. Class-Driver, die weiterhin den Tunnel nutzen, müssen auf Client und Server exakt übereinstimmen.
 
 
 ## Druckbereitschaft ab 0.2.0
@@ -135,6 +135,6 @@ Bei Netzwerkdruckern versucht SimplePrint zusätzlich:
 - Printer-MIB Fehlerstatus
 - Verbrauchsmaterialbeschreibung, Maximalstand und aktuellen Stand
 
-Bei USB-, WSD- oder sonstigen lokalen Druckern stehen nur die Informationen zur Verfügung, die Windows bzw. der installierte Treiber bereitstellt. SNMP-Werte werden nur bei erreichbaren Netzwerkdruckern angezeigt; fehlende Werte werden nicht geschätzt oder erfunden.er an den Spooler zurückmeldet.
+Bei USB-, WSD- oder sonstigen lokalen Druckern stehen nur die Informationen zur Verfügung, die Windows bzw. der installierte Treiber bereitstellt. SNMP-Werte werden nur bei erreichbaren Netzwerkdruckern angezeigt; fehlende Werte werden nicht geschätzt oder erfunden.
 
 Eine grüne Prüfung bedeutet: **Nach allem technisch Abfragbaren sollte der Druckpfad funktionieren.** Sie kann ohne tatsächlichen Ausdruck nicht mechanisch bestätigen, dass ein Blatt Papier aus dem Gerät gekommen ist.
