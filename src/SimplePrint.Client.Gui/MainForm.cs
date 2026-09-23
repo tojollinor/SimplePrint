@@ -12,6 +12,8 @@ public sealed class MainForm : Form
     private readonly DataGridView _serversGrid = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
     private readonly DataGridView _available = new() { Dock = DockStyle.Fill, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
     private readonly DataGridView _installed = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
+    private readonly DataGridView _jobs = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
+    private readonly System.Windows.Forms.Timer _jobTimer = new() { Interval = 2000 };
     private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };
     private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
     private readonly NotifyIcon _tray;
@@ -57,11 +59,14 @@ public sealed class MainForm : Form
         tabs.TabPages.Add(CreateServerTab());
         tabs.TabPages.Add(CreateAvailableTab());
         tabs.TabPages.Add(CreateInstalledTab());
+        tabs.TabPages.Add(CreateJobsTab());
         tabs.TabPages.Add(CreateSettingsTab());
         tabs.Selected += async (_, e) =>
         {
             if (e.TabPage?.Text == "Verfügbare Drucker")
                 await RefreshAvailablePrintersAsync();
+            else if (e.TabPage?.Text == "Druckaufträge")
+                RefreshJobsGrid();
         };
 
         var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
@@ -105,7 +110,15 @@ public sealed class MainForm : Form
             e.Cancel = true;
             HideToTray();
         };
-        FormClosed += (_, _) => _tray.Dispose();
+        _jobTimer.Tick += (_, _) => RefreshJobsGrid();
+        _jobTimer.Start();
+
+        FormClosed += (_, _) =>
+        {
+            _jobTimer.Stop();
+            _jobTimer.Dispose();
+            _tray.Dispose();
+        };
 
         Shown += async (_, _) =>
         {
@@ -134,6 +147,18 @@ public sealed class MainForm : Form
         _installed.Columns.Add("server", "Server");
         _installed.Columns.Add("driver", "Treiber");
         _installed.Columns.Add("port", "Lokaler Proxy-Port");
+
+        _jobs.Columns.Add("time", "Zeit");
+        _jobs.Columns.Add("printer", "Drucker");
+        _jobs.Columns.Add("server", "Server");
+        _jobs.Columns.Add("status", "Status");
+        _jobs.Columns.Add("bytes", "Bytes");
+        _jobs.Columns.Add("message", "Meldung");
+
+        _serversGrid.Cursor = Cursors.Default;
+        _available.Cursor = Cursors.Default;
+        _installed.Cursor = Cursors.Default;
+        _jobs.Cursor = Cursors.Default;
     }
 
     private TabPage CreateServerTab()
@@ -179,7 +204,26 @@ public sealed class MainForm : Form
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         buttons.Controls.Add(MakeButton("Drucker entfernen", async (_, _) => await RemoveSelectedAsync()));
         buttons.Controls.Add(MakeButton("Testseite", (_, _) => TestPage()));
+        buttons.Controls.Add(MakeButton("Schnelldiagnose", async (_, _) => await QuickDiagnosisAsync()));
         tab.Controls.Add(_installed);
+        tab.Controls.Add(buttons);
+        return tab;
+    }
+
+    private TabPage CreateJobsTab()
+    {
+        var tab = new TabPage("Druckaufträge");
+        var info = new Label
+        {
+            Dock = DockStyle.Top,
+            Height = 48,
+            Padding = new Padding(10),
+            Text = "Statuskette: Windows-Warteschlange → lokaler Proxy → Server → Server-Spooler → Druckerstatus."
+        };
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
+        buttons.Controls.Add(MakeButton("Aktualisieren", (_, _) => RefreshJobsGrid()));
+        tab.Controls.Add(_jobs);
+        tab.Controls.Add(info);
         tab.Controls.Add(buttons);
         return tab;
     }
@@ -232,6 +276,7 @@ public sealed class MainForm : Form
 
         await RefreshAvailablePrintersAsync();
         RefreshInstalledGrid();
+        RefreshJobsGrid();
         RefreshStartupState();
     }
 
@@ -343,6 +388,37 @@ public sealed class MainForm : Form
         {
             var i = _installed.Rows.Add(m.LocalPrinterName, m.ServerName, m.DriverName, m.LocalProxyPort);
             _installed.Rows[i].Tag = m.PortName;
+        }
+    }
+
+    private void RefreshJobsGrid()
+    {
+        List<PrintJobRecord> jobs;
+        try
+        {
+            jobs = JsonStore.LoadOrCreate(AppPaths.ClientJobs, () => new List<PrintJobRecord>());
+        }
+        catch
+        {
+            jobs = [];
+        }
+
+        _jobs.Rows.Clear();
+
+        foreach (var job in jobs.OrderByDescending(x => x.CreatedAt).Take(100))
+        {
+            var row = _jobs.Rows.Add(
+                job.CreatedAt.ToLocalTime().ToString("dd.MM. HH:mm:ss"),
+                string.IsNullOrWhiteSpace(job.LocalPrinterName) ? job.PrinterName : job.LocalPrinterName,
+                job.ServerName,
+                job.Status,
+                job.Bytes == 0 ? "" : job.Bytes.ToString("N0"),
+                job.Message);
+
+            _jobs.Rows[row].Tag = job.JobId;
+
+            if (job.Status.Equals("Fehler", StringComparison.OrdinalIgnoreCase))
+                _jobs.Rows[row].DefaultCellStyle.ForeColor = Color.DarkRed;
         }
     }
 
@@ -461,10 +537,15 @@ public sealed class MainForm : Form
 
         _config.Mappings.Add(mapping);
         JsonStore.Save(AppPaths.ClientConfig, _config);
-        await Task.Delay(1600);
 
         try
         {
+            SetBusy($"Lokaler SimplePrint-Proxy auf Port {localPort} wird gestartet …");
+
+            if (!await WaitForLocalProxyAsync(localPort, TimeSpan.FromSeconds(8)))
+                throw new InvalidOperationException(
+                    $"Der SimplePrint Client-Agent lauscht nicht auf 127.0.0.1:{localPort}. Die Windows-Druckerqueue wurde deshalb nicht angelegt.");
+
             await PrinterInstaller.InstallAsync(mapping);
         }
         catch
@@ -473,6 +554,31 @@ public sealed class MainForm : Form
             JsonStore.Save(AppPaths.ClientConfig, _config);
             throw;
         }
+    }
+
+    private static async Task<bool> WaitForLocalProxyAsync(int port, TimeSpan timeout)
+    {
+        var started = DateTime.UtcNow;
+
+        while (DateTime.UtcNow - started < timeout)
+        {
+            try
+            {
+                var listeners = System.Net.NetworkInformation.IPGlobalProperties
+                    .GetIPGlobalProperties()
+                    .GetActiveTcpListeners();
+
+                if (listeners.Any(x => x.Port == port && System.Net.IPAddress.IsLoopback(x.Address)))
+                    return true;
+            }
+            catch
+            {
+            }
+
+            await Task.Delay(250);
+        }
+
+        return false;
     }
 
     private string? ChooseDriver(List<string> drivers, string suggested)
@@ -548,6 +654,53 @@ public sealed class MainForm : Form
         {
             SetStatus("✗ Drucker konnte nicht entfernt werden.");
             MessageBox.Show(ex.Message, "Entfernen fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private async Task QuickDiagnosisAsync()
+    {
+        if (_installed.SelectedRows.Count == 0)
+        {
+            MessageBox.Show("Bitte zuerst einen installierten Drucker markieren.");
+            return;
+        }
+
+        var portName = (string)_installed.SelectedRows[0].Tag;
+        var mapping = _config.Mappings.FirstOrDefault(m => m.PortName == portName);
+
+        if (mapping is null)
+        {
+            MessageBox.Show("Für diese Zeile wurde keine SimplePrint-Zuordnung gefunden.");
+            return;
+        }
+
+        SetBusy("Schnelldiagnose wird ausgeführt …");
+
+        try
+        {
+            var local = await PrinterInstaller.GetQuickDiagnosisAsync(mapping);
+            var server = _servers.FirstOrDefault(x => x.Announcement.ServerId == mapping.ServerId);
+
+            var serverState = server is null
+                ? $"Server '{mapping.ServerName}': aktuell nicht per Discovery gefunden"
+                : $"Server '{server.Announcement.ServerName}': {server.Address}:{server.Announcement.GatewayPort} gefunden";
+
+            SetStatus("✓ Schnelldiagnose abgeschlossen.");
+
+            MessageBox.Show(
+                serverState + Environment.NewLine + Environment.NewLine + local,
+                "SimplePrint Schnelldiagnose",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Schnelldiagnose fehlgeschlagen.");
+            MessageBox.Show(ex.Message, "Schnelldiagnose", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
@@ -683,14 +836,13 @@ public sealed class MainForm : Form
     {
         _operationStatus.Text = text;
         _operationProgress.Visible = true;
-        UseWaitCursor = true;
-        Application.DoEvents();
+        Cursor = Cursors.Default;
     }
 
     private void SetIdle()
     {
         _operationProgress.Visible = false;
-        UseWaitCursor = false;
+        Cursor = Cursors.Default;
     }
 
     private void SetStatus(string text)
