@@ -15,6 +15,9 @@ public sealed class MainForm : Form
     private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };
     private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
     private readonly NotifyIcon _tray;
+    private readonly ToolStripStatusLabel _operationStatus = new() { Text = "Bereit" };
+    private readonly ToolStripProgressBar _operationProgress = new() { Style = ProgressBarStyle.Marquee, Visible = false, Width = 100 };
+    private bool _publicNetworkWarningShown;
 
     private ClientConfig _config = new();
     private List<DiscoveredServer> _servers = [];
@@ -25,13 +28,14 @@ public sealed class MainForm : Form
     public MainForm()
     {
         Text = "SimplePrint Client";
-        Width = 1000;
-        Height = 700;
+        Width = 620;
+        Height = 500;
+        MinimumSize = new Size(560, 440);
         StartPosition = FormStartPosition.CenterScreen;
         Branding.ApplyApplicationIcon(this);
 
-        var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 96, Padding = new Padding(10), ColumnCount = 2, RowCount = 1 };
-        top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
+        var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 132, Padding = new Padding(10), ColumnCount = 2, RowCount = 1 };
+        top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         top.Controls.Add(Branding.CreateGuiLogoBox(), 0, 0);
 
@@ -66,11 +70,17 @@ public sealed class MainForm : Form
         bottom.Controls.Add(MakeButton("Diagnosepaket", async (_, _) => await CreateDiagnosticsAsync()));
         bottom.Controls.Add(MakeButton("Über", (_, _) => ShowAbout()));
 
+        var statusStrip = new StatusStrip { SizingGrip = false };
+        statusStrip.Items.Add(_operationStatus);
+        statusStrip.Items.Add(new ToolStripStatusLabel { Spring = true });
+        statusStrip.Items.Add(_operationProgress);
+
         Controls.Add(tabs);
         Controls.Add(top);
         Controls.Add(bottom);
+        Controls.Add(statusStrip);
 
-        var trayIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+        var trayIcon = Branding.LoadFixedIcon() ?? (Icon)SystemIcons.Application.Clone();
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("SimplePrint Client öffnen", null, (_, _) => ShowFromTray());
         trayMenu.Items.Add("Server suchen", null, async (_, _) => await RefreshAllAsync());
@@ -229,19 +239,52 @@ public sealed class MainForm : Form
     {
         _config = JsonStore.LoadOrCreate(AppPaths.ClientConfig, () => new ClientConfig());
 
-        _scan.Text = "suche ...";
-        try
-        {
-            _servers = (await Discovery.DiscoverAsync(_config.DiscoveryPort, 1200)).ToList();
-        }
-        catch
+        var profile = await NetworkProfileHelper.GetStateAsync();
+        if (profile.HasPublicProfile)
         {
             _servers = [];
+            _scan.Text = "öffentliches Netzwerk";
+            RefreshServerGrid();
+            RefreshAvailableGrid();
+            SetStatus("⚠ Öffentliches Netzwerk: Serversuche blockiert.");
+
+            if (!_publicNetworkWarningShown)
+            {
+                _publicNetworkWarningShown = true;
+                MessageBox.Show(
+                    "Dieses Gerät befindet sich in einem öffentlichen Netzwerk.\r\n\r\nSimplePrint funktioniert nur in privaten oder Domänennetzwerken. Bitte stelle das Windows-Netzwerkprofil auf \"Privat\" oder verbinde das Gerät mit dem Domänennetzwerk.",
+                    "SimplePrint Netzwerk",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+            return;
         }
 
-        _scan.Text = _servers.Count == 0 ? "kein Server gefunden" : $"{_servers.Count} Server gefunden";
-        RefreshServerGrid();
-        RefreshAvailableGrid();
+        _publicNetworkWarningShown = false;
+        SetBusy("Server werden gesucht …");
+        _scan.Text = "suche ...";
+
+        try
+        {
+            _servers = (await Discovery.DiscoverAsync(_config.DiscoveryPort, 1500, default, _config.ManualServer)).ToList();
+            _scan.Text = _servers.Count == 0 ? "kein Server gefunden" : $"{_servers.Count} Server gefunden";
+            RefreshServerGrid();
+            RefreshAvailableGrid();
+            SetStatus(_servers.Count == 0 ? "Kein Server gefunden." : $"✓ {_servers.Count} Server gefunden.");
+        }
+        catch (Exception ex)
+        {
+            _servers = [];
+            _scan.Text = "Suche fehlgeschlagen";
+            RefreshServerGrid();
+            RefreshAvailableGrid();
+            SetStatus("✗ Serversuche fehlgeschlagen.");
+            MessageBox.Show(ex.Message, "Serversuche", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
     }
 
     private void RefreshStartupState()
@@ -316,6 +359,7 @@ public sealed class MainForm : Form
         JsonStore.Save(AppPaths.ClientConfig, _config);
         RefreshServerGrid();
         RefreshAvailableGrid();
+        SetStatus($"✓ Server '{server.Announcement.ServerName}' ausgewählt.");
         MessageBox.Show($"'{server.Announcement.ServerName}' wird jetzt als fester SimplePrint-Server verwendet.");
     }
 
@@ -325,6 +369,7 @@ public sealed class MainForm : Form
         JsonStore.Save(AppPaths.ClientConfig, _config);
         RefreshServerGrid();
         RefreshAvailableGrid();
+        SetStatus("✓ Serverauswahl aufgehoben.");
     }
 
     private async Task SavePrinterSelectionAsync()
@@ -371,6 +416,7 @@ public sealed class MainForm : Form
             }
 
             await RefreshAllAsync();
+            SetStatus("✓ Druckerauswahl wurde übernommen.");
             MessageBox.Show("Die Druckerauswahl wurde übernommen.", "SimplePrint");
         }
         catch (OperationCanceledException ex)
@@ -399,7 +445,7 @@ public sealed class MainForm : Form
         var shortServer = tag.Server.Announcement.ServerId.ToString("N")[..8];
         var shortPrinter = tag.Printer.Id.ToString("N")[..8];
         var portName = $"SimplePrint_{shortServer}_{shortPrinter}";
-        var localName = UniqueLocalName(tag.Printer.DisplayName);
+        var localName = UniqueLocalName($"{tag.Printer.DisplayName} (SimplePrint)");
 
         var mapping = new ClientPrinterMapping
         {
@@ -490,14 +536,22 @@ public sealed class MainForm : Form
 
         try
         {
+            SetBusy($"'{mapping.LocalPrinterName}' wird entfernt …");
             await PrinterInstaller.RemoveAsync(mapping);
             _config.Mappings.Remove(mapping);
             JsonStore.Save(AppPaths.ClientConfig, _config);
             await RefreshAllAsync();
+            SetStatus($"✓ '{mapping.LocalPrinterName}' wurde entfernt.");
+            MessageBox.Show($"'{mapping.LocalPrinterName}' wurde aus SimplePrint entfernt.", "SimplePrint");
         }
         catch (Exception ex)
         {
+            SetStatus("✗ Drucker konnte nicht entfernt werden.");
             MessageBox.Show(ex.Message, "Entfernen fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
         }
     }
 
@@ -531,6 +585,7 @@ public sealed class MainForm : Form
             await stream.WriteAsync(Protocol.CreateGatewayHeader(Guid.Empty), cts.Token);
             var reply = new byte[6];
             var ok = await Protocol.ReadExactAsync(stream, reply, cts.Token) && System.Text.Encoding.ASCII.GetString(reply) == "SPROK1";
+            SetStatus(ok ? "✓ Verbindung zum Server erfolgreich." : "✗ Server antwortet ungültig.");
             MessageBox.Show($"{server.Announcement.ServerName} ({server.Address}): {(ok ? "OK" : "keine gültige Antwort")}", "SimplePrint Verbindungstest");
         }
         catch (Exception ex)
@@ -583,22 +638,53 @@ public sealed class MainForm : Form
         if (save.ShowDialog(this) != DialogResult.OK) return;
         try
         {
+            SetBusy("Diagnosepaket wird erstellt …");
             using var zip = ZipFile.Open(save.FileName, ZipArchiveMode.Create);
             if (File.Exists(AppPaths.ClientConfig)) zip.CreateEntryFromFile(AppPaths.ClientConfig, "config.json", CompressionLevel.Optimal);
             if (File.Exists(AppPaths.ClientLog)) zip.CreateEntryFromFile(AppPaths.ClientLog, "client.log", CompressionLevel.Optimal);
+
             var e = zip.CreateEntry("diagnostics.txt");
-            using var w = new StreamWriter(e.Open());
-            await w.WriteAsync(await PrinterInstaller.GetDiagnosticsAsync());
+            await using (var stream = e.Open())
+            await using (var w = new StreamWriter(stream))
+            {
+                await w.WriteAsync(await PrinterInstaller.GetDiagnosticsAsync());
+            }
+
             var discovery = zip.CreateEntry("discovery.txt");
-            using var dw = new StreamWriter(discovery.Open());
-            foreach (var s in _servers)
-                await dw.WriteLineAsync($"{s.Announcement.ServerName} {s.Address}:{s.Announcement.GatewayPort} id={s.Announcement.ServerId} printers={s.Announcement.Printers.Count}");
+            await using (var stream = discovery.Open())
+            await using (var dw = new StreamWriter(stream))
+            {
+                foreach (var server in _servers)
+                    await dw.WriteLineAsync($"{server.Announcement.ServerName} {server.Address}:{server.Announcement.GatewayPort} id={server.Announcement.ServerId} printers={server.Announcement.Printers.Count}");
+            }
+
+            SetStatus("✓ Diagnosepaket wurde erstellt.");
             MessageBox.Show("Diagnosepaket wurde erstellt.");
         }
         catch (Exception ex)
         {
             MessageBox.Show(ex.Message, "Diagnose", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private void SetBusy(string text)
+    {
+        _operationStatus.Text = text;
+        _operationProgress.Visible = true;
+        UseWaitCursor = true;
+        Application.DoEvents();
+    }
+
+    private void SetIdle()
+    {
+        _operationProgress.Visible = false;
+        UseWaitCursor = false;
+    }
+
+    private void SetStatus(string text)
+    {
+        SetIdle();
+        _operationStatus.Text = text;
     }
 
     private void ShowFromTray()
