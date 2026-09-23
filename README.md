@@ -1,4 +1,4 @@
-# SimplePrint 0.1.5
+# SimplePrint 0.1.6
 
 Kleiner Windows-Druckserver für genau einen Zweck: **Drucken ohne Rendering-Veränderung**, plus Diagnose.
 
@@ -34,7 +34,7 @@ USB-/lokaler Drucker
 
 ## Installation aus fertigem Setup
 
-1. Auf dem Druckserver `SimplePrint-Setup-0.1.5.exe` starten und **PrintServer** auswählen.
+1. Auf dem Druckserver `SimplePrint-Setup-0.1.6.exe` starten und **PrintServer** auswählen.
 2. `SimplePrint Server` öffnen und den lokal installierten Drucker über **Drucker hinzufügen** freigeben.
 3. Auf einem Windows-10/11-Client dasselbe Setup starten und **PrintClient** auswählen.
 4. `SimplePrint Client` öffnen. Der Server sollte automatisch erscheinen.
@@ -59,7 +59,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 Die veröffentlichten Programme landen in `dist\`. Wenn Inno Setup vorhanden ist, entsteht zusätzlich:
 
 ```text
-dist\Installer\SimplePrint-Setup-0.1.5.exe
+dist\Installer\SimplePrint-Setup-0.1.6.exe
 ```
 
 ## Diagnose
@@ -84,7 +84,7 @@ Beim Brother DCP-L2510D sollte auf dem **Client der native Brother-Treiber** aus
 
 ## Stand
 
-Die aktuelle Fassung ist `0.1.5`. Sie ist als praxisnaher MVP gebaut und wurde um robuste LAN-Erkennung, Client-Präsenz, sichere eigene `(SimplePrint)`-Druckerqueues, Netzwerkprofil-Prüfung sowie verbesserte Diagnose- und Statusanzeigen erweitert. Besonders GDI-Treiber können herstellerspezifisches Verhalten haben. Die Diagnosefunktionen sind genau dafür eingebaut.
+Die aktuelle Fassung ist `0.1.6`. Sie ergänzt bidirektionale Druckauftragsverfolgung zwischen Client und Server, Server-Spoolerstatus, Schnelldiagnosen, Offline-Clientverwaltung sowie robustere lokale RAW-Proxy-Ports. Jeder Auftrag erhält eine gemeinsame Job-ID, die auf Client und Server angezeigt wird. Besonders GDI-Treiber können herstellerspezifisches Verhalten haben. Die Diagnosefunktionen sind genau dafür eingebaut.
 
 ## Logo und Branding
 
@@ -95,3 +95,21 @@ SimplePrint trennt das feste Programm-Icon vom austauschbaren Logo in der Oberfl
 - `logo.png` kann nach der Installation durch eine eigene PNG-Datei ersetzt werden. Beim nächsten Start der GUI wird das neue Bild angezeigt.
 - Fehlt `logo.png` oder ist die Datei beschädigt, verwendet die GUI automatisch das intern eingebettete Standardlogo.
 - Ein vorhandenes, nachträglich angepasstes `logo.png` wird bei einer erneuten Installation/Update nicht überschrieben.
+
+
+## Druckauftragsstatus ab 0.1.6
+
+Client und Server speichern die letzten Druckaufträge mit derselben Job-ID. Dadurch lässt sich der Weg eines Auftrags nachvollziehen:
+
+```text
+Windows-Warteschlange
+  → lokaler SimplePrint-Proxy
+  → an Server übertragen
+  → vom Server empfangen
+  → an Windows-Spooler des Servers übergeben
+  → druckt / gedruckt / abgeschlossen / Fehler
+```
+
+Hinweis: **„Gedruckt“** wird nur angezeigt, wenn der Windows-Spooler diesen Status tatsächlich meldet. Verschwindet ein Auftrag nach erfolgreicher Übergabe aus der Warteschlange, ohne dass der Drucker einen separaten Printed-Status liefert, zeigt SimplePrint **„Abgeschlossen“**. Das bestätigt den Abschluss im Windows-Drucksystem, nicht mechanisch das Vorhandensein eines Blattes im Ausgabefach.
+
+Für den RAW-Tunnel werden Hersteller-PCL6- oder PostScript-Treiber empfohlen. Der Microsoft IPP Class Driver kann eine echte IPP-Gegenstelle erwarten und wird deshalb in der Schnelldiagnose entsprechend gekennzeichnet.

@@ -57,5 +57,5 @@ jobs:
             gh release create $tag "$($installer.FullName)" `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: robuste LAN-Erkennung, Warnung bei öffentlichen Netzwerkprofilen, Client-Onlineanzeige am Server, eigene Druckerqueues mit (SimplePrint), sichere Druckerentfernung, Lade- und Erfolgsmeldungen, korrigierte Diagnosepakete, kompaktere Fenster und erneuertes Windows-Icon."
+              --notes "SimplePrint ${version}: bidirektionale Druckauftragsverfolgung mit gemeinsamer Job-ID, Server-Spoolerstatus, Client- und Server-Druckauftragstabellen, Schnelldiagnose, Offline-Clientverwaltung, Proxy-Bereitschaftsprüfung, SNMP-deaktivierte lokale Druckports und IPP-Class-Driver-Warnung."
           }
