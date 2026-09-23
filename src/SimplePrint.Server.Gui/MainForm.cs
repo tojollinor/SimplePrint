@@ -15,7 +15,7 @@ public sealed class MainForm : Form
     private readonly Label _network = new() { AutoSize = true };
     private readonly CheckedListBox _printers = new() { Dock = DockStyle.Fill, CheckOnClick = true, HorizontalScrollbar = true };
     private readonly DataGridView _firewall = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false };
-    private readonly CheckBox _startup = new() { Text = "SimplePrint Server bei jeder Windows-Anmeldung im Infobereich starten", AutoSize = true };
+    private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };\n    private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
     private readonly NotifyIcon _tray;
     private ServerConfig _config = new();
     private List<LocalPrinterInfo> _localPrinters = [];
@@ -143,16 +143,30 @@ public sealed class MainForm : Form
     private TabPage CreateSettingsTab()
     {
         var tab = new TabPage("Allgemein");
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(18) };
+        var panel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Padding = new Padding(18)
+        };
+
         panel.Controls.Add(new Label
         {
             AutoSize = true,
             MaximumSize = new Size(820, 0),
-            Text = "Der eigentliche PrintServer läuft als automatischer Windows-Dienst bereits ohne Anmeldung. Die folgende Option startet zusätzlich nur die Oberfläche im Infobereich."
+            Text = "Der PrintServer-Dienst startet automatisch mit Windows und läuft auch ohne Benutzeranmeldung. Der GUI-Autostart mit Tray-Symbol kann hier separat aktiviert oder deaktiviert werden."
         });
-        panel.Controls.Add(new Label { Height = 8, AutoSize = false });
+        panel.Controls.Add(new Label { Height = 10, AutoSize = false });
+        panel.Controls.Add(_startupStatus);
+        panel.Controls.Add(new Label { Height = 6, AutoSize = false });
         panel.Controls.Add(_startup);
-        panel.Controls.Add(MakeButton("Autostart übernehmen", async (_, _) => await SaveStartupAsync()));
+
+        var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 12, 0, 0) };
+        buttons.Controls.Add(MakeButton("Autostart aktivieren", async (_, _) => await SetStartupAsync(true)));
+        buttons.Controls.Add(MakeButton("Autostart deaktivieren", async (_, _) => await SetStartupAsync(false)));
+        panel.Controls.Add(buttons);
+
         tab.Controls.Add(panel);
         return tab;
     }
@@ -176,7 +190,7 @@ public sealed class MainForm : Form
         _network.Text = string.IsNullOrWhiteSpace(net.StdOut) ? "unbekannt" : net.StdOut.Trim();
 
         _tray.Text = $"SimplePrint Server - {_service.Text}";
-        _startup.Checked = StartupManager.IsSystemWideEnabled("SimplePrintServerGui");
+        RefreshStartupState();
         await RefreshFirewallAsync();
     }
 
@@ -292,13 +306,33 @@ public sealed class MainForm : Form
         }
     }
 
-    private async Task SaveStartupAsync()
+    private void RefreshStartupState()
+    {
+        var enabled = StartupManager.IsSystemWideEnabled("SimplePrintServerGui");
+        _startupStatus.Text = enabled ? "Status: Autostart aktiviert" : "Status: Autostart deaktiviert";
+        _startup.Checked = enabled
+            ? StartupManager.IsTrayModeEnabled("SimplePrintServerGui", true)
+            : true;
+    }
+
+    private async Task SetStartupAsync(bool enabled)
     {
         try
         {
-            await StartupManager.SetSystemWideAsync("SimplePrintServerGui", Application.ExecutablePath, _startup.Checked);
-            _startup.Checked = StartupManager.IsSystemWideEnabled("SimplePrintServerGui");
-            MessageBox.Show(_startup.Checked ? "Systemweiter GUI-Autostart ist aktiviert." : "Systemweiter GUI-Autostart ist deaktiviert.");
+            await StartupManager.SetSystemWideAsync(
+                "SimplePrintServerGui",
+                Application.ExecutablePath,
+                enabled,
+                _startup.Checked);
+
+            RefreshStartupState();
+            MessageBox.Show(
+                enabled ? "Systemweiter GUI-Autostart wurde aktiviert." : "Systemweiter GUI-Autostart wurde deaktiviert.",
+                "Autostart");
+        }
+        catch (OperationCanceledException ex)
+        {
+            MessageBox.Show(ex.Message, "Autostart", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
