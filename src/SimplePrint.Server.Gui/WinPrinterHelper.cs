@@ -91,7 +91,7 @@ function Get-SimplePrintRuleState($name,$display,$protocol,$port) {
 
     public static Task ApplyFirewallAsync()
     {
-        const string script = @"
+        const string script = """
 $ErrorActionPreference='Stop'
 
 Get-NetFirewallRule -Name 'SimplePrint-Discovery' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
@@ -136,7 +136,7 @@ if(($private -and [string]$private.AllowLocalFirewallRules -eq 'False') -and
    ($domain -and [string]$domain.AllowLocalFirewallRules -eq 'False')) {
   throw 'Windows/Gruppenrichtlinie blockiert lokale Firewallregeln für Privat und Domäne.'
 }
-";
+""";
 
         return PrivilegeHelper.RunPowerShellElevatedAsync(script);
     }
@@ -237,5 +237,5 @@ Get-NetUDPEndpoint -LocalPort 45880 -ErrorAction SilentlyContinue | Format-Table
     }
 
     private static string QuoteArg(string value) =>
-        """ + value.Replace(""", "\\"") + """;
+        "\"" + value.Replace("\"", "\\\"") + "\"";
 }
