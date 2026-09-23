@@ -1,4 +1,4 @@
-# SimplePrint 0.1.0
+# SimplePrint 0.1.5
 
 Kleiner Windows-Druckserver für genau einen Zweck: **Drucken ohne Rendering-Veränderung**, plus Diagnose.
 
@@ -7,9 +7,9 @@ SimplePrint ersetzt weder den nativen Druckertreiber noch verarbeitet es PDF/Pos
 ## Enthalten
 
 - **Serverdienst** mit automatischer LAN-Erkennung (UDP 45880) und Print-Gateway (TCP 45881)
-- **Server-GUI** zum Hinzufügen/Entfernen lokaler Windows-Drucker, Status, Testseite, Firewall-Reparatur und Diagnose-ZIP
+- **Server-GUI** mit Druckerfreigaben, Client-Online/Offline-Anzeige, Status, Testseite, Firewall-Verwaltung und Diagnose-ZIP
 - **Client-Agent als Windows-Dienst**, der Server automatisch findet und DHCP-Adresswechsel transparent abfängt
-- **Client-GUI** zum Suchen, Installieren und Entfernen der bereitgestellten Drucker sowie Testseite und Diagnose-ZIP
+- **Client-GUI** zum Suchen und festen Auswählen eines Servers, Installieren/Entfernen eigener `(SimplePrint)`-Druckerqueues sowie Testseite und Diagnose-ZIP
 - **Installer**, der Dienste automatisch erstellt/startet und auf dem Server die benötigten Firewallregeln anlegt
 
 ## Warum DHCP kein Problem ist
@@ -34,7 +34,7 @@ USB-/lokaler Drucker
 
 ## Installation aus fertigem Setup
 
-1. Auf dem Druckserver `SimplePrint-Setup-0.1.0.exe` starten und **PrintServer** auswählen.
+1. Auf dem Druckserver `SimplePrint-Setup-0.1.5.exe` starten und **PrintServer** auswählen.
 2. `SimplePrint Server` öffnen und den lokal installierten Drucker über **Drucker hinzufügen** freigeben.
 3. Auf einem Windows-10/11-Client dasselbe Setup starten und **PrintClient** auswählen.
 4. `SimplePrint Client` öffnen. Der Server sollte automatisch erscheinen.
@@ -59,7 +59,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 Die veröffentlichten Programme landen in `dist\`. Wenn Inno Setup vorhanden ist, entsteht zusätzlich:
 
 ```text
-dist\Installer\SimplePrint-Setup-0.1.0.exe
+dist\Installer\SimplePrint-Setup-0.1.5.exe
 ```
 
 ## Diagnose
@@ -84,7 +84,7 @@ Beim Brother DCP-L2510D sollte auf dem **Client der native Brother-Treiber** aus
 
 ## Stand
 
-Dies ist die erste implementierte Fassung (`0.1.0`). Sie ist als praxisnaher MVP gebaut, muss aber auf einem echten Windows-10/11-System mit dem konkreten Druckertreiber getestet werden. Besonders GDI-Treiber können herstellerspezifisches Verhalten haben. Die Diagnosefunktionen sind genau dafür eingebaut.
+Die aktuelle Fassung ist `0.1.5`. Sie ist als praxisnaher MVP gebaut und wurde um robuste LAN-Erkennung, Client-Präsenz, sichere eigene `(SimplePrint)`-Druckerqueues, Netzwerkprofil-Prüfung sowie verbesserte Diagnose- und Statusanzeigen erweitert. Besonders GDI-Treiber können herstellerspezifisches Verhalten haben. Die Diagnosefunktionen sind genau dafür eingebaut.
 
 ## Logo und Branding
 
