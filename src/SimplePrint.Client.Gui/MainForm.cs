@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Net.Sockets;
+using System.Text.Json;
 using SimplePrint.Common;
 
 namespace SimplePrint.Client.Gui;
@@ -493,6 +494,36 @@ public sealed class MainForm : Form
         }
     }
 
+    private void ClearCompletedJobs()
+    {
+        var jobs = JsonStore.LoadOrCreate(
+            AppPaths.ClientJobs,
+            () => new List<PrintJobRecord>());
+
+        var completed = new HashSet<string>(
+            ["Gedruckt", "Abgeschlossen", "Ignoriert", "Fehler"],
+            StringComparer.OrdinalIgnoreCase);
+
+        var count = jobs.RemoveAll(x => completed.Contains(x.Status));
+        JsonStore.Save(AppPaths.ClientJobs, jobs);
+        RefreshJobsGrid();
+        SetStatus($"✓ {count} abgeschlossene Druckaufträge gelöscht.");
+    }
+
+    private void ClearAllJobs()
+    {
+        if (MessageBox.Show(
+                "Die gesamte lokale Druckauftragshistorie löschen?",
+                "Druckaufträge löschen",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        JsonStore.Save(AppPaths.ClientJobs, new List<PrintJobRecord>());
+        RefreshJobsGrid();
+        SetStatus("✓ Druckauftragshistorie gelöscht.");
+    }
+
     private void UseSelectedServer()
     {
         if (_serversGrid.SelectedRows.Count == 0)
@@ -547,6 +578,16 @@ public sealed class MainForm : Form
         if (server is null)
         {
             MessageBox.Show("Der ausgewählte Server wurde aktuell nicht gefunden.");
+            return;
+        }
+
+        if (server.Announcement.Version != Protocol.Version)
+        {
+            MessageBox.Show(
+                $"Der ausgewählte Server verwendet Protokoll {server.Announcement.Version}; benötigt wird {Protocol.Version}.",
+                "Inkompatibler Server",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
             return;
         }
 
@@ -1027,6 +1068,16 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (server.Announcement.Version != Protocol.Version)
+        {
+            MessageBox.Show(
+                $"Server gefunden, aber inkompatibel. Server-Protokoll: {server.Announcement.Version}, Client-Protokoll: {Protocol.Version}.",
+                "Verbindung",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
         try
         {
             SetBusy("Verbindung zum Server wird getestet …");
@@ -1104,6 +1155,7 @@ public sealed class MainForm : Form
             using var zip = ZipFile.Open(save.FileName, ZipArchiveMode.Create);
             if (File.Exists(AppPaths.ClientConfig)) zip.CreateEntryFromFile(AppPaths.ClientConfig, "config.json", CompressionLevel.Optimal);
             if (File.Exists(AppPaths.ClientLog)) zip.CreateEntryFromFile(AppPaths.ClientLog, "client.log", CompressionLevel.Optimal);
+            if (File.Exists(AppPaths.ClientJobs)) zip.CreateEntryFromFile(AppPaths.ClientJobs, "jobs.json", CompressionLevel.Optimal);
 
             var e = zip.CreateEntry("diagnostics.txt");
             await using (var stream = e.Open())
@@ -1117,7 +1169,61 @@ public sealed class MainForm : Form
             await using (var dw = new StreamWriter(stream))
             {
                 foreach (var server in _servers)
-                    await dw.WriteLineAsync($"{server.Announcement.ServerName} {server.Address}:{server.Announcement.GatewayPort} id={server.Announcement.ServerId} printers={server.Announcement.Printers.Count}");
+                    await dw.WriteLineAsync(
+                        $"{server.Announcement.ServerName} {server.Address}:{server.Announcement.GatewayPort} " +
+                        $"app={server.Announcement.AppVersion} protocol={server.Announcement.Version} " +
+                        $"compatible={server.Announcement.Version == Protocol.Version} " +
+                        $"id={server.Announcement.ServerId} printers={server.Announcement.Printers.Count}");
+            }
+
+            var healthResults = new List<PrinterHealthStatus>();
+
+            foreach (var mapping in _config.Mappings)
+            {
+                try
+                {
+                    var local = await PrinterInstaller.GetLocalReadinessAsync(mapping);
+                    var health = await QueryServerPrinterHealthAsync(mapping);
+
+                    health.ClientTransportStatus = local.Detail;
+                    health.ServerTransportStatus =
+                        $"Server '{mapping.ServerName}' · Protokoll {Protocol.Version}";
+
+                    foreach (var warning in local.Warnings)
+                    {
+                        if (!health.Warnings.Contains(warning, StringComparer.OrdinalIgnoreCase))
+                            health.Warnings.Add(warning);
+                    }
+
+                    if (!local.Ready)
+                    {
+                        health.Level = "Red";
+                        health.Summary = "Lokale Client-Druckkette nicht vollständig funktionsfähig.";
+                    }
+
+                    healthResults.Add(health);
+                }
+                catch (Exception ex)
+                {
+                    healthResults.Add(new PrinterHealthStatus
+                    {
+                        PrinterId = mapping.PrinterId,
+                        PrinterName = mapping.LocalPrinterName,
+                        Level = "Red",
+                        Summary = "End-to-End-Prüfung fehlgeschlagen.",
+                        Warnings = [ex.Message]
+                    });
+                }
+            }
+
+            var healthEntry = zip.CreateEntry("printer-health.json");
+            await using (var stream = healthEntry.Open())
+            await using (var hw = new StreamWriter(stream))
+            {
+                await hw.WriteAsync(
+                    JsonSerializer.Serialize(
+                        healthResults,
+                        JsonStore.Options));
             }
 
             SetStatus("✓ Diagnosepaket wurde erstellt.");
@@ -1147,6 +1253,40 @@ public sealed class MainForm : Form
     {
         SetIdle();
         _operationStatus.Text = text;
+    }
+
+    private void UpdateTrayStatus()
+    {
+        var agentOk = _agent.Text.Equals("Running", StringComparison.OrdinalIgnoreCase);
+
+        var preferred = _config.PreferredServerId is Guid preferredId
+            ? _servers.FirstOrDefault(x => x.Announcement.ServerId == preferredId)
+            : null;
+
+        var publicNetwork = _scan.Text.Contains(
+            "öffentlich",
+            StringComparison.OrdinalIgnoreCase);
+
+        var level = !agentOk || publicNetwork
+            ? "Red"
+            : preferred is not null &&
+              preferred.Announcement.Version == Protocol.Version
+                ? "Green"
+                : "Yellow";
+
+        var next = Branding.CreateStatusIcon(level);
+        if (next is null) return;
+
+        var previous = _tray.Icon;
+        _tray.Icon = next;
+        previous?.Dispose();
+
+        _tray.Text = level switch
+        {
+            "Green" => "SimplePrint Client - bereit",
+            "Yellow" => "SimplePrint Client - Serverauswahl prüfen",
+            _ => "SimplePrint Client - Problem"
+        };
     }
 
     private void ShowFromTray()
