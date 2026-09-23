@@ -375,6 +375,27 @@ public sealed class ServerWorker : BackgroundService
                     $"SimplePrint {record.ClientName} {jobId:N}",
                     ct);
 
+                if (result.Bytes == 0 || result.SpoolerJobId == 0)
+                {
+                    _jobs.TryRemove(jobId, out _);
+                    await SaveJobsAsync();
+
+                    await Protocol.WriteJobAckAsync(
+                        stream,
+                        new PrintJobAck
+                        {
+                            JobId = jobId,
+                            Success = true,
+                            Status = "Ignoriert",
+                            Message = "Leere Portmonitor-Verbindung ignoriert.",
+                            Bytes = 0
+                        },
+                        ct);
+
+                    _log.Info($"Leere Druckverbindung {jobId} von {remote} ignoriert.");
+                    return;
+                }
+
                 record.Bytes = result.Bytes;
                 record.SpoolerJobId = result.SpoolerJobId;
                 record.Status = "Spooler";
