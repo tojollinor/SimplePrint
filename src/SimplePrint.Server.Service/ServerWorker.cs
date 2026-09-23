@@ -199,8 +199,12 @@ public sealed class ServerWorker : BackgroundService
                 if (result.Buffer.AsSpan().SequenceEqual(Protocol.DiscoveryRequestBytes))
                 {
                     var current = SnapshotConfig();
+                    var assemblyVersion = typeof(ServerWorker).Assembly.GetName().Version;
                     var response = new DiscoveryAnnouncement
                     {
+                        AppVersion = assemblyVersion is null
+                            ? "unbekannt"
+                            : $"{assemblyVersion.Major}.{assemblyVersion.Minor}.{assemblyVersion.Build}",
                         ServerId = current.ServerId,
                         ServerName = string.IsNullOrWhiteSpace(current.ServerName)
                             ? Environment.MachineName
@@ -242,6 +246,7 @@ public sealed class ServerWorker : BackgroundService
                         : heartbeat.ClientName,
                     Address = result.RemoteEndPoint.Address.ToString(),
                     AgentVersion = heartbeat.AgentVersion,
+                    ProtocolVersion = heartbeat.Version,
                     PreferredServerId = heartbeat.PreferredServerId,
                     InstalledPrinterCount = heartbeat.InstalledPrinterCount,
                     LastSeen = DateTimeOffset.Now
@@ -322,11 +327,39 @@ public sealed class ServerWorker : BackgroundService
                     return;
                 }
 
-                if (jobId == Guid.Empty)
-                    jobId = Guid.NewGuid();
-
                 var cfg = SnapshotConfig();
                 var printer = cfg.Printers.FirstOrDefault(p => p.Id == printerId && p.Enabled);
+
+                // printerId + leere jobId ist eine reine Druckbereitschaftsabfrage.
+                if (jobId == Guid.Empty)
+                {
+                    PrinterHealthStatus health;
+
+                    if (printer is null)
+                    {
+                        health = new PrinterHealthStatus
+                        {
+                            PrinterId = printerId,
+                            Level = "Red",
+                            Summary = "Der Drucker ist auf diesem Server nicht freigegeben.",
+                            CheckedAt = DateTimeOffset.Now
+                        };
+                    }
+                    else
+                    {
+                        health = await PrinterHealthProbe.ProbeAsync(
+                            printer.QueueName,
+                            printer.Id,
+                            ct);
+
+                        health.PrinterName = string.IsNullOrWhiteSpace(printer.DisplayName)
+                            ? printer.QueueName
+                            : printer.DisplayName;
+                    }
+
+                    await Protocol.WritePrinterHealthAsync(stream, health, ct);
+                    return;
+                }
 
                 if (printer is null)
                 {
