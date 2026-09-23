@@ -5,6 +5,7 @@ namespace SimplePrint.Common;
 public static class StartupManager
 {
     private const string RunKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+    private const string PreferenceKey = @"SOFTWARE\SimplePrint\Preferences";
 
     public static bool IsSystemWideEnabled(string valueName)
         => GetSystemWideCommand(valueName) is not null;
@@ -32,26 +33,33 @@ public static class StartupManager
 
     public static Task SetSystemWideAsync(string valueName, string executablePath, bool enabled, bool startInTray = true)
     {
-        var key = @"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
-        string script;
+        var runKey = @"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+        var preferenceKey = @"HKLM:\SOFTWARE\SimplePrint\Preferences";
+        var enabledPreference = valueName + "Enabled";
+        var trayPreference = valueName + "Tray";
+
+        var command = startInTray
+            ? $"\"{executablePath}\" --tray"
+            : $"\"{executablePath}\"";
+
+        var script = $@"
+$ErrorActionPreference='Stop'
+New-Item -Path {PowerShellRunner.Quote(preferenceKey)} -Force | Out-Null
+New-ItemProperty -Path {PowerShellRunner.Quote(preferenceKey)} -Name {PowerShellRunner.Quote(enabledPreference)} -Value {Convert.ToInt32(enabled)} -PropertyType DWord -Force | Out-Null
+New-ItemProperty -Path {PowerShellRunner.Quote(preferenceKey)} -Name {PowerShellRunner.Quote(trayPreference)} -Value {Convert.ToInt32(startInTray)} -PropertyType DWord -Force | Out-Null
+";
 
         if (enabled)
         {
-            var command = startInTray
-                ? $"\"{executablePath}\" --tray"
-                : $"\"{executablePath}\"";
-
-            script = $@"
-$ErrorActionPreference='Stop'
-New-Item -Path {PowerShellRunner.Quote(key)} -Force | Out-Null
-New-ItemProperty -Path {PowerShellRunner.Quote(key)} -Name {PowerShellRunner.Quote(valueName)} -Value {PowerShellRunner.Quote(command)} -PropertyType String -Force | Out-Null
+            script += $@"
+New-Item -Path {PowerShellRunner.Quote(runKey)} -Force | Out-Null
+New-ItemProperty -Path {PowerShellRunner.Quote(runKey)} -Name {PowerShellRunner.Quote(valueName)} -Value {PowerShellRunner.Quote(command)} -PropertyType String -Force | Out-Null
 ";
         }
         else
         {
-            script = $@"
-$ErrorActionPreference='Stop'
-Remove-ItemProperty -Path {PowerShellRunner.Quote(key)} -Name {PowerShellRunner.Quote(valueName)} -ErrorAction SilentlyContinue
+            script += $@"
+Remove-ItemProperty -Path {PowerShellRunner.Quote(runKey)} -Name {PowerShellRunner.Quote(valueName)} -ErrorAction SilentlyContinue
 ";
         }
 
