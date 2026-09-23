@@ -13,6 +13,10 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
   throw ".NET 8 SDK wurde nicht gefunden. Installiere das .NET 8 SDK und starte das Skript erneut."
 }
 
+Write-Host "Generating branding assets..." -ForegroundColor Yellow
+& (Join-Path $Root "tools\Generate-Branding.ps1") -Root $Root
+if ($LASTEXITCODE -ne 0) { throw "Branding-Erzeugung fehlgeschlagen." }
+
 if (Test-Path $Dist) { Remove-Item $Dist -Recurse -Force }
 New-Item $Dist -ItemType Directory | Out-Null
 
@@ -29,6 +33,9 @@ foreach ($p in $projects) {
   dotnet publish (Join-Path $Root $p.Project) -c $Configuration -r $Runtime --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false `
     -o $out
+  if ($LASTEXITCODE -ne 0) {
+    throw "dotnet publish für $($p.Name) ist fehlgeschlagen."
+  }
 }
 
 if ($SkipInstaller) {
