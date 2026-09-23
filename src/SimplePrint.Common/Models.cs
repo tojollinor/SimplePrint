@@ -48,6 +48,7 @@ public sealed class DiscoveryAnnouncement
 {
     public string Magic { get; set; } = Protocol.DiscoveryResponseMagic;
     public int Version { get; set; } = Protocol.Version;
+    public string AppVersion { get; set; } = "";
     public Guid ServerId { get; set; }
     public string ServerName { get; set; } = "";
     public int GatewayPort { get; set; }
@@ -81,6 +82,7 @@ public sealed class ClientPresence
     public string ClientName { get; set; } = "";
     public string Address { get; set; } = "";
     public string AgentVersion { get; set; } = "";
+    public int ProtocolVersion { get; set; }
     public Guid? PreferredServerId { get; set; }
     public int InstalledPrinterCount { get; set; }
     public DateTimeOffset LastSeen { get; set; }
@@ -122,4 +124,46 @@ public sealed class PrintJobAck
     public long Bytes { get; set; }
     public uint? SpoolerJobId { get; set; }
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
+}
+
+
+public sealed class PrinterSupplyStatus
+{
+    public string Name { get; set; } = "";
+    public int? Percent { get; set; }
+    public string State { get; set; } = "";
+}
+
+public sealed class PrinterHealthStatus
+{
+    public Guid PrinterId { get; set; }
+    public string PrinterName { get; set; } = "";
+    public string QueueName { get; set; } = "";
+    public string DriverName { get; set; } = "";
+    public string PortName { get; set; } = "";
+    public string DeviceAddress { get; set; } = "";
+    public int? DevicePort { get; set; }
+    public string Level { get; set; } = "Unknown";
+    public string Summary { get; set; } = "";
+    public string QueueStatus { get; set; } = "";
+    public bool QueueExists { get; set; }
+    public bool QueuePaused { get; set; }
+    public bool QueueOffline { get; set; }
+    public bool? PingReachable { get; set; }
+    public bool? TcpReachable { get; set; }
+    public bool SnmpAvailable { get; set; }
+    public string DeviceStatus { get; set; } = "";
+    public string PaperStatus { get; set; } = "";
+    public List<PrinterSupplyStatus> Supplies { get; set; } = [];
+    public List<string> Warnings { get; set; } = [];
+    public DateTimeOffset CheckedAt { get; set; } = DateTimeOffset.Now;
+}
+
+public sealed class FirewallRuleStatus
+{
+    public string Name { get; set; } = "";
+    public bool Exists { get; set; }
+    public bool Enabled { get; set; }
+    public bool Correct { get; set; }
+    public string Detail { get; set; } = "";
 }
