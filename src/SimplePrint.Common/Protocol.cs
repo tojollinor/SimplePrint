@@ -6,7 +6,7 @@ namespace SimplePrint.Common;
 
 public static class Protocol
 {
-    public const int Version = 2;
+    public const int Version = 3;
     public const int DefaultDiscoveryPort = 45880;
     public const int DefaultGatewayPort = 45881;
     public const string DiscoveryRequestMagic = "SPRDISC1";
@@ -14,7 +14,7 @@ public static class Protocol
     public const string ClientHeartbeatMagic = "SPRCLT1";
     public const int GatewayHeaderLength = 40;
 
-    private static readonly byte[] GatewayMagic = Encoding.ASCII.GetBytes("SPR2");
+    private static readonly byte[] GatewayMagic = Encoding.ASCII.GetBytes("SPR3");
 
     public static byte[] DiscoveryRequestBytes => Encoding.ASCII.GetBytes(DiscoveryRequestMagic);
 
@@ -26,7 +26,7 @@ public static class Protocol
         try
         {
             var item = JsonSerializer.Deserialize<DiscoveryAnnouncement>(bytes, JsonStore.Options);
-            return item?.Magic == DiscoveryResponseMagic && item.Version == Version ? item : null;
+            return item?.Magic == DiscoveryResponseMagic ? item : null;
         }
         catch { return null; }
     }
@@ -39,7 +39,7 @@ public static class Protocol
         try
         {
             var item = JsonSerializer.Deserialize<ClientHeartbeat>(bytes, JsonStore.Options);
-            return item?.Magic == ClientHeartbeatMagic && item.Version == Version ? item : null;
+            return item?.Magic == ClientHeartbeatMagic ? item : null;
         }
         catch { return null; }
     }
@@ -89,6 +89,37 @@ public static class Protocol
         try
         {
             return JsonSerializer.Deserialize<PrintJobAck>(payload, JsonStore.Options);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static async Task WritePrinterHealthAsync(Stream stream, PrinterHealthStatus status, CancellationToken ct)
+    {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(status, JsonStore.Options);
+        var length = new byte[4];
+        BinaryPrimitives.WriteInt32LittleEndian(length, payload.Length);
+        await stream.WriteAsync(length, ct);
+        await stream.WriteAsync(payload, ct);
+        await stream.FlushAsync(ct);
+    }
+
+    public static async Task<PrinterHealthStatus?> ReadPrinterHealthAsync(Stream stream, CancellationToken ct)
+    {
+        var length = new byte[4];
+        if (!await ReadExactAsync(stream, length, ct)) return null;
+
+        var size = BinaryPrimitives.ReadInt32LittleEndian(length);
+        if (size <= 0 || size > 1024 * 1024) return null;
+
+        var payload = new byte[size];
+        if (!await ReadExactAsync(stream, payload, ct)) return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<PrinterHealthStatus>(payload, JsonStore.Options);
         }
         catch
         {
