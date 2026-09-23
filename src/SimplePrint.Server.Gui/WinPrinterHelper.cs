@@ -33,8 +33,8 @@ $g = Get-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -ErrorAction S
 $ErrorActionPreference='Stop'
 Get-NetFirewallRule -DisplayName 'SimplePrint Discovery' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 Get-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName 'SimplePrint Discovery' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 45880 -Profile Private,Domain | Out-Null
-New-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 45881 -Profile Private,Domain | Out-Null
+New-NetFirewallRule -DisplayName 'SimplePrint Discovery' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 45880 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+New-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 45881 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
 ";
         return PrivilegeHelper.RunPowerShellElevatedAsync(script);
     }
@@ -57,7 +57,7 @@ $ErrorActionPreference='Continue'
 Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,CsName | Format-List | Out-String
 '=== SERVICE ==='
 Get-Service -Name SimplePrintServer -ErrorAction SilentlyContinue | Format-List * | Out-String
-'=== PRINTERS ==='
+'=== NETWORK PROFILE ==='\nGet-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4Connectivity -AutoSize | Out-String\n'=== PRINTERS ==='
 Get-Printer | Format-Table Name,DriverName,PortName,PrinterStatus -AutoSize | Out-String
 '=== FIREWALL ==='
 Get-NetFirewallRule -DisplayName 'SimplePrint*' -ErrorAction SilentlyContinue | Select-Object DisplayName,Enabled,Profile,Direction,Action | Format-Table -AutoSize | Out-String
