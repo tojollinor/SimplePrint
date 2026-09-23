@@ -578,6 +578,7 @@ public sealed class MainForm : Form
 
         try
         {
+            SetBusy("Verbindung zum Server wird getestet …");
             using var tcp = new TcpClient();
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             await tcp.ConnectAsync(server.Address, server.Announcement.GatewayPort, cts.Token);
@@ -590,21 +591,30 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
+            SetStatus("✗ Verbindungstest fehlgeschlagen.");
             MessageBox.Show($"{server.Announcement.ServerName} ({server.Address}): FEHLER\n{ex.Message}", "SimplePrint Verbindungstest", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
     private void TestPage()
     {
-        if (_installed.SelectedRows.Count == 0) return;
+        if (_installed.SelectedRows.Count == 0)
+        {
+            MessageBox.Show("Bitte zuerst einen installierten Drucker markieren.");
+            return;
+        }
+
         var portName = (string)_installed.SelectedRows[0].Tag;
-        PrinterInstaller.PrintTestPage(_config.Mappings.First(m => m.PortName == portName).LocalPrinterName);
+        var mapping = _config.Mappings.First(m => m.PortName == portName);
+        PrinterInstaller.PrintTestPage(mapping.LocalPrinterName);
+        SetStatus($"✓ Testseite für '{mapping.LocalPrinterName}' wurde gestartet.");
     }
 
     private async Task SetStartupAsync(bool enabled)
     {
         try
         {
+            SetBusy(enabled ? "Autostart wird aktiviert …" : "Autostart wird deaktiviert …");
             await StartupManager.SetSystemWideAsync(
                 "SimplePrintClientGui",
                 Application.ExecutablePath,
@@ -612,6 +622,7 @@ public sealed class MainForm : Form
                 _startup.Checked);
 
             RefreshStartupState();
+            SetStatus(enabled ? "✓ Autostart aktiviert." : "✓ Autostart deaktiviert.");
             MessageBox.Show(
                 enabled ? "Systemweiter GUI-Autostart wurde aktiviert." : "Systemweiter GUI-Autostart wurde deaktiviert.",
                 "Autostart");
@@ -663,6 +674,7 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
+            SetStatus("✗ Diagnosepaket konnte nicht erstellt werden.");
             MessageBox.Show(ex.Message, "Diagnose", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
