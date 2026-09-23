@@ -15,7 +15,9 @@ public sealed class MainForm : Form
     private readonly Label _network = new() { AutoSize = true };
     private readonly CheckedListBox _printers = new() { Dock = DockStyle.Fill, CheckOnClick = true, HorizontalScrollbar = true };
     private readonly DataGridView _firewall = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false };
-    private readonly DataGridView _clients = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false };
+    private readonly DataGridView _clients = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
+    private readonly DataGridView _jobs = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
+    private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 2000 };
     private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };
     private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
     private readonly NotifyIcon _tray;
@@ -55,6 +57,7 @@ public sealed class MainForm : Form
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(CreatePrinterTab());
         tabs.TabPages.Add(CreateClientsTab());
+        tabs.TabPages.Add(CreateJobsTab());
         tabs.TabPages.Add(CreateFirewallTab());
         tabs.TabPages.Add(CreateSettingsTab());
 
@@ -98,7 +101,19 @@ public sealed class MainForm : Form
             e.Cancel = true;
             HideToTray();
         };
-        FormClosed += (_, _) => _tray.Dispose();
+        _refreshTimer.Tick += (_, _) =>
+        {
+            RefreshClients(false);
+            RefreshJobsGrid();
+        };
+        _refreshTimer.Start();
+
+        FormClosed += (_, _) =>
+        {
+            _refreshTimer.Stop();
+            _refreshTimer.Dispose();
+            _tray.Dispose();
+        };
 
         Shown += async (_, _) =>
         {
@@ -144,9 +159,39 @@ public sealed class MainForm : Form
             Padding = new Padding(10),
             Text = "Client-Agenten melden sich automatisch. Nach 35 Sekunden ohne Lebenszeichen wird ein Client als offline angezeigt."
         };
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 58, Padding = new Padding(8) };
         buttons.Controls.Add(MakeButton("Clients aktualisieren", (_, _) => RefreshClients()));
+        buttons.Controls.Add(MakeButton("Schnelldiagnose", (_, _) => ClientQuickDiagnosis()));
+        buttons.Controls.Add(MakeButton("Offline-Client löschen", (_, _) => DeleteSelectedOfflineClient()));
+        buttons.Controls.Add(MakeButton("Alle Offline löschen", (_, _) => DeleteAllOfflineClients()));
         tab.Controls.Add(_clients);
+        tab.Controls.Add(info);
+        tab.Controls.Add(buttons);
+        return tab;
+    }
+
+    private TabPage CreateJobsTab()
+    {
+        _jobs.Columns.Add("time", "Zeit");
+        _jobs.Columns.Add("client", "Client");
+        _jobs.Columns.Add("printer", "Drucker");
+        _jobs.Columns.Add("status", "Status");
+        _jobs.Columns.Add("bytes", "Bytes");
+        _jobs.Columns.Add("spooler", "Spooler-ID");
+        _jobs.Columns.Add("message", "Meldung");
+
+        var tab = new TabPage("Druckaufträge");
+        var info = new Label
+        {
+            Dock = DockStyle.Top,
+            Height = 48,
+            Padding = new Padding(10),
+            Text = "Serverstatus eines Druckauftrags: empfangen → Spooler → druckt → gedruckt/abgeschlossen oder Fehler."
+        };
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
+        buttons.Controls.Add(MakeButton("Aktualisieren", (_, _) => RefreshJobsGrid()));
+
+        tab.Controls.Add(_jobs);
         tab.Controls.Add(info);
         tab.Controls.Add(buttons);
         return tab;
@@ -230,6 +275,7 @@ public sealed class MainForm : Form
         _tray.Text = $"SimplePrint Server - {_service.Text}";
         RefreshStartupState();
         RefreshClients();
+        RefreshJobsGrid();
 
         var profile = await NetworkProfileHelper.GetStateAsync();
         if (profile.HasPublicProfile)
@@ -334,7 +380,7 @@ public sealed class MainForm : Form
         SetStatus($"✓ Testseite für '{choice.Info.Name}' wurde gestartet.");
     }
 
-    private void RefreshClients()
+    private void RefreshClients(bool updateStatus = true)
     {
         List<ClientPresence> clients;
         try
@@ -359,11 +405,153 @@ public sealed class MainForm : Form
                 client.InstalledPrinterCount,
                 client.LastSeen.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss"));
 
+            _clients.Rows[row].Tag = client;
+
             if (!online)
                 _clients.Rows[row].DefaultCellStyle.ForeColor = SystemColors.GrayText;
         }
 
-        SetStatus($"✓ {clients.Count(x => now - x.LastSeen <= TimeSpan.FromSeconds(35))} Client(s) online.");
+        if (updateStatus)
+            SetStatus($"✓ {clients.Count(x => now - x.LastSeen <= TimeSpan.FromSeconds(35))} Client(s) online.");
+    }
+
+    private void RefreshJobsGrid()
+    {
+        List<PrintJobRecord> jobs;
+        try
+        {
+            jobs = JsonStore.LoadOrCreate(AppPaths.ServerJobs, () => new List<PrintJobRecord>());
+        }
+        catch
+        {
+            jobs = [];
+        }
+
+        _jobs.Rows.Clear();
+
+        foreach (var job in jobs.OrderByDescending(x => x.CreatedAt).Take(150))
+        {
+            var row = _jobs.Rows.Add(
+                job.CreatedAt.ToLocalTime().ToString("dd.MM. HH:mm:ss"),
+                job.ClientName,
+                job.PrinterName,
+                job.Status,
+                job.Bytes == 0 ? "" : job.Bytes.ToString("N0"),
+                job.SpoolerJobId?.ToString() ?? "",
+                job.Message);
+
+            _jobs.Rows[row].Tag = job.JobId;
+
+            if (job.Status.Equals("Fehler", StringComparison.OrdinalIgnoreCase))
+                _jobs.Rows[row].DefaultCellStyle.ForeColor = Color.DarkRed;
+        }
+    }
+
+    private void DeleteSelectedOfflineClient()
+    {
+        if (_clients.SelectedRows.Count == 0 ||
+            _clients.SelectedRows[0].Tag is not ClientPresence client)
+        {
+            MessageBox.Show("Bitte zuerst einen Client markieren.");
+            return;
+        }
+
+        if (DateTimeOffset.Now - client.LastSeen <= TimeSpan.FromSeconds(35))
+        {
+            MessageBox.Show("Online-Clients können nicht gelöscht werden. Sobald der Client offline ist, kann sein gespeicherter Eintrag entfernt werden.");
+            return;
+        }
+
+        if (MessageBox.Show(
+                $"Offline-Client '{client.ClientName}' aus der Liste löschen?",
+                "Client löschen",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        var clients = JsonStore.LoadOrCreate(AppPaths.ServerClients, () => new List<ClientPresence>());
+        clients.RemoveAll(x => x.ClientId == client.ClientId);
+        JsonStore.Save(AppPaths.ServerClients, clients);
+        RefreshClients();
+        SetStatus($"✓ Offline-Client '{client.ClientName}' gelöscht.");
+    }
+
+    private void DeleteAllOfflineClients()
+    {
+        var clients = JsonStore.LoadOrCreate(AppPaths.ServerClients, () => new List<ClientPresence>());
+        var now = DateTimeOffset.Now;
+        var count = clients.RemoveAll(x => now - x.LastSeen > TimeSpan.FromSeconds(35));
+
+        if (count == 0)
+        {
+            MessageBox.Show("Es sind keine Offline-Clients gespeichert.");
+            return;
+        }
+
+        JsonStore.Save(AppPaths.ServerClients, clients);
+        RefreshClients();
+        SetStatus($"✓ {count} Offline-Client(s) gelöscht.");
+    }
+
+    private void ClientQuickDiagnosis()
+    {
+        if (_clients.SelectedRows.Count == 0 ||
+            _clients.SelectedRows[0].Tag is not ClientPresence client)
+        {
+            MessageBox.Show("Bitte zuerst einen Client markieren.");
+            return;
+        }
+
+        var now = DateTimeOffset.Now;
+        var online = now - client.LastSeen <= TimeSpan.FromSeconds(35);
+
+        List<PrintJobRecord> jobs;
+        try
+        {
+            jobs = JsonStore.LoadOrCreate(AppPaths.ServerJobs, () => new List<PrintJobRecord>());
+        }
+        catch
+        {
+            jobs = [];
+        }
+
+        var recent = jobs
+            .Where(x => x.ClientId == client.ClientId ||
+                        (!string.IsNullOrWhiteSpace(client.ClientName) &&
+                         x.ClientName.Equals(client.ClientName, StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(5)
+            .ToList();
+
+        var lines = new List<string>
+        {
+            $"Client: {client.ClientName}",
+            $"IP-Adresse: {client.Address}",
+            $"Status: {(online ? "Online" : "Offline")}",
+            $"Letztes Lebenszeichen: {client.LastSeen.ToLocalTime():dd.MM.yyyy HH:mm:ss}",
+            $"Agent-Version: {client.AgentVersion}",
+            $"Installierte SimplePrint-Drucker: {client.InstalledPrinterCount}",
+            "",
+            "Letzte Druckaufträge:"
+        };
+
+        if (recent.Count == 0)
+        {
+            lines.Add("Keine Druckaufträge gespeichert.");
+        }
+        else
+        {
+            foreach (var job in recent)
+                lines.Add($"{job.CreatedAt.ToLocalTime():HH:mm:ss} · {job.PrinterName} · {job.Status} · {job.Message}");
+        }
+
+        SetStatus("✓ Client-Schnelldiagnose erstellt.");
+
+        MessageBox.Show(
+            string.Join(Environment.NewLine, lines),
+            "SimplePrint Client-Schnelldiagnose",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
     }
 
     private async Task RefreshFirewallAsync()
@@ -454,6 +642,8 @@ public sealed class MainForm : Form
             using var zip = ZipFile.Open(save.FileName, ZipArchiveMode.Create);
             AddFile(zip, AppPaths.ServerConfig, "config.json");
             AddFile(zip, AppPaths.ServerLog, "server.log");
+            AddFile(zip, AppPaths.ServerClients, "clients.json");
+            AddFile(zip, AppPaths.ServerJobs, "jobs.json");
             var e = zip.CreateEntry("diagnostics.txt");
             using var w = new StreamWriter(e.Open());
             await w.WriteAsync(await WinPrinterHelper.GetDiagnosticsAsync());
@@ -476,14 +666,13 @@ public sealed class MainForm : Form
     {
         _operationStatus.Text = text;
         _operationProgress.Visible = true;
-        UseWaitCursor = true;
-        Application.DoEvents();
+        Cursor = Cursors.Default;
     }
 
     private void SetIdle()
     {
         _operationProgress.Visible = false;
-        UseWaitCursor = false;
+        Cursor = Cursors.Default;
     }
 
     private void SetStatus(string text)
