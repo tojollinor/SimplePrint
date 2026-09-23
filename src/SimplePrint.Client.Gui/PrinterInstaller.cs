@@ -21,7 +21,7 @@ $driver={PowerShellRunner.Quote(mapping.DriverName)}
 
 $existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 if($existing -and $existing.PortName -ne $port) {{
-  throw "Der Drucker '$printer' existiert bereits und gehört nicht zu SimplePrint. Er wird nicht verändert."
+  throw ('Der Drucker ' + $printer + ' existiert bereits und gehört nicht zu SimplePrint. Er wird nicht verändert.')
 }}
 
 if(-not (Get-PrinterPort -Name $port -ErrorAction SilentlyContinue)) {{
@@ -46,7 +46,7 @@ $port={PowerShellRunner.Quote(mapping.PortName)}
 $existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 if($existing) {{
   if($existing.PortName -ne $port) {{
-    throw "Der Drucker '$printer' verwendet nicht den erwarteten SimplePrint-Port. Er wird aus Sicherheitsgründen nicht gelöscht."
+    throw ('Der Drucker ' + $printer + ' verwendet nicht den erwarteten SimplePrint-Port. Er wird aus Sicherheitsgründen nicht gelöscht.')
   }}
   Remove-Printer -Name $printer -ErrorAction Stop
 }}
