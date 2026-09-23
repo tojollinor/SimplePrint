@@ -604,10 +604,16 @@ public sealed class MainForm : Form
         if (driver is null) driver = ChooseDriver(drivers, tag.Printer.DriverName);
         if (driver is null) return;
 
-        if (driver.Contains("IPP Class Driver", StringComparison.OrdinalIgnoreCase))
+        if (IsGenericClassDriver(driver))
         {
             var answer = MessageBox.Show(
-                "Der ausgewählte Treiber ist ein Microsoft IPP Class Driver.\r\n\r\nDieser Treiber erwartet normalerweise eine echte IPP-Verbindung zum Drucker. SimplePrint stellt dagegen einen RAW-Tunnel bereit. Dadurch kann der Drucker zwar installiert werden, aber der Ausdruck fehlschlagen.\r\n\r\nEmpfohlen wird ein Hersteller-PCL6- oder PostScript-Treiber.\r\n\r\nTrotzdem mit diesem Treiber fortfahren?",
+                "Der ausgewählte Treiber ist ein generischer/Class-Treiber:\r\n\r\n" +
+                driver +
+                "\r\n\r\nSolche Treiber erwarten teilweise eine direkte Geräte- oder IPP-Kommunikation. " +
+                "SimplePrint überträgt dagegen den bereits gerenderten RAW-Datenstrom. " +
+                "Dadurch kann die Installation funktionieren, der Ausdruck aber trotzdem scheitern.\r\n\r\n" +
+                "Empfohlen wird ein passender Hersteller-PCL6- oder PostScript-Treiber.\r\n\r\n" +
+                "Trotzdem mit diesem Treiber fortfahren?",
                 "Treiberhinweis",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning);
@@ -679,6 +685,12 @@ public sealed class MainForm : Form
 
         return false;
     }
+
+    private static bool IsGenericClassDriver(string driver) =>
+        driver.Contains("Class Driver", StringComparison.OrdinalIgnoreCase) ||
+        driver.Contains("Type1 Class", StringComparison.OrdinalIgnoreCase) ||
+        driver.Contains("Type 1 Class", StringComparison.OrdinalIgnoreCase) ||
+        driver.Contains("Microsoft IPP", StringComparison.OrdinalIgnoreCase);
 
     private string? ChooseDriver(List<string> drivers, string suggested)
     {
@@ -758,6 +770,130 @@ public sealed class MainForm : Form
         {
             SetIdle();
         }
+    }
+
+    private async Task ShowInstalledPrinterHealthAsync()
+    {
+        var mapping = GetSelectedInstalledMapping();
+        if (mapping is null)
+        {
+            MessageBox.Show("Bitte zuerst einen installierten Drucker markieren.");
+            return;
+        }
+
+        SetBusy("End-to-End-Druckbereitschaft wird geprüft …");
+
+        try
+        {
+            var local = await PrinterInstaller.GetLocalReadinessAsync(mapping);
+            var health = await QueryServerPrinterHealthAsync(mapping);
+
+            health.ClientTransportStatus = local.Detail;
+            health.ServerTransportStatus =
+                $"Server '{mapping.ServerName}' erreichbar · Protokoll {Protocol.Version}";
+
+            foreach (var warning in local.Warnings)
+            {
+                if (!health.Warnings.Contains(warning, StringComparer.OrdinalIgnoreCase))
+                    health.Warnings.Insert(0, warning);
+            }
+
+            if (!local.Ready)
+            {
+                health.Level = "Red";
+                health.Summary =
+                    "Nicht druckbereit: Die lokale Client-Druckkette ist nicht vollständig funktionsfähig.";
+            }
+            else if (local.Warnings.Count > 0 &&
+                     health.Level.Equals("Green", StringComparison.OrdinalIgnoreCase))
+            {
+                health.Level = "Yellow";
+                health.Summary =
+                    "Druck wahrscheinlich möglich, aber der Client meldet einen Treiberhinweis.";
+            }
+
+            using var dialog = new PrinterHealthForm(health);
+            SetStatus(
+                health.Level == "Green"
+                    ? "✓ End-to-End-Druckbereitschaft: bereit."
+                    : health.Level == "Red"
+                        ? "✗ End-to-End-Druckbereitschaft: nicht bereit."
+                        : "⚠ End-to-End-Druckbereitschaft: mit Hinweisen.");
+
+            dialog.ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Druckbereitschaft konnte nicht geprüft werden.");
+            MessageBox.Show(
+                ex.Message,
+                "Druckbereitschaft",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private async Task<PrinterHealthStatus> QueryServerPrinterHealthAsync(
+        ClientPrinterMapping mapping)
+    {
+        var server = _servers.FirstOrDefault(
+            x => x.Announcement.ServerId == mapping.ServerId);
+
+        if (server is null)
+        {
+            await RefreshAvailablePrintersAsync();
+            server = _servers.FirstOrDefault(
+                x => x.Announcement.ServerId == mapping.ServerId);
+        }
+
+        if (server is null)
+            throw new InvalidOperationException(
+                $"Server '{mapping.ServerName}' wurde aktuell nicht gefunden.");
+
+        if (server.Announcement.Version != Protocol.Version)
+            throw new InvalidOperationException(
+                $"Server '{server.Announcement.ServerName}' verwendet Protokoll " +
+                $"{server.Announcement.Version}; benötigt wird {Protocol.Version}.");
+
+        using var tcp = new TcpClient { NoDelay = true };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+
+        await tcp.ConnectAsync(
+            server.Address,
+            server.Announcement.GatewayPort,
+            timeout.Token);
+
+        using var stream = tcp.GetStream();
+        await stream.WriteAsync(
+            Protocol.CreateGatewayHeader(mapping.PrinterId, Guid.Empty),
+            timeout.Token);
+
+        var health = await Protocol.ReadPrinterHealthAsync(
+            stream,
+            timeout.Token);
+
+        if (health is null)
+            throw new InvalidOperationException(
+                "Der Server hat keine gültige Druckerstatus-Antwort geliefert.");
+
+        return health;
+    }
+
+    private ClientPrinterMapping? GetSelectedInstalledMapping()
+    {
+        if (_installed.SelectedRows.Count == 0)
+            return null;
+
+        var portName = _installed.SelectedRows[0].Tag as string;
+        if (string.IsNullOrWhiteSpace(portName))
+            return null;
+
+        return _config.Mappings.FirstOrDefault(
+            x => x.PortName.Equals(portName, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task QuickDiagnosisAsync()
