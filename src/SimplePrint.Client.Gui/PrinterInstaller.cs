@@ -90,25 +90,27 @@ $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 $pp = Get-PrinterPort -Name $port -ErrorAction SilentlyContinue
 $listen = Get-NetTCPConnection -State Listen -LocalPort $proxyPort -ErrorAction SilentlyContinue
 
+$problems = @()
 $warnings = @()
-if(-not $svc -or [string]$svc.Status -ne 'Running') {{ $warnings += 'SimplePrint Client-Agent läuft nicht.' }}
-if(-not $p) {{ $warnings += 'Windows-Druckerqueue fehlt.' }}
-elseif($p.PortName -ne $port) {{ $warnings += 'Windows-Drucker verwendet nicht den erwarteten SimplePrint-Port.' }}
 
-if(-not $pp) {{ $warnings += 'SimplePrint-Druckerport fehlt.' }}
-if(-not $listen) {{ $warnings += 'Lokaler SimplePrint-Proxy lauscht nicht auf Port ' + $proxyPort + '.' }}
+if(-not $svc -or [string]$svc.Status -ne 'Running') {{ $problems += 'SimplePrint Client-Agent läuft nicht.' }}
+if(-not $p) {{ $problems += 'Windows-Druckerqueue fehlt.' }}
+elseif($p.PortName -ne $port) {{ $problems += 'Windows-Drucker verwendet nicht den erwarteten SimplePrint-Port.' }}
+
+if(-not $pp) {{ $problems += 'SimplePrint-Druckerport fehlt.' }}
+if(-not $listen) {{ $problems += 'Lokaler SimplePrint-Proxy lauscht nicht auf Port ' + $proxyPort + '.' }}
 
 if($p -and ([string]$p.DriverName -match 'Class Driver|Type1 Class|Type 1 Class|Microsoft IPP')) {{
   $warnings += 'Generischer/Class-Treiber erkannt. Hersteller-PCL6/PS wird für RAW-Druck empfohlen.'
 }}
 
 [pscustomobject]@{{
-  Ready = ($warnings.Count -eq 0)
+  Ready = ($problems.Count -eq 0)
   Detail = 'Dienst=' + $(if($svc){{[string]$svc.Status}}else{{'fehlt'}}) +
            '; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
            '; Port=' + $(if($pp){{'vorhanden'}}else{{'fehlt'}}) +
            '; Proxy=' + $(if($listen){{'lauscht'}}else{{'nicht aktiv'}})
-  Warnings = @($warnings)
+  Warnings = @($problems + $warnings)
 }} | ConvertTo-Json -Compress
 ";
 
