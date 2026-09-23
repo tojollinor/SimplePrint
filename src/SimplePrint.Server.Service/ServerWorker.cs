@@ -145,6 +145,10 @@ public sealed class ServerWorker : BackgroundService
                     QueueName = p.QueueName,
                     DisplayName = p.DisplayName,
                     DriverName = p.DriverName,
+                    PortName = p.PortName,
+                    TransportMode = p.TransportMode,
+                    DirectAddress = p.DirectAddress,
+                    DeviceUuid = p.DeviceUuid,
                     Enabled = p.Enabled
                 }).ToList()
             };
@@ -219,6 +223,10 @@ public sealed class ServerWorker : BackgroundService
                                     ? p.QueueName
                                     : p.DisplayName,
                                 DriverName = p.DriverName,
+                                PortName = p.PortName,
+                                TransportMode = p.TransportMode,
+                                DirectAddress = p.DirectAddress,
+                                DeviceUuid = p.DeviceUuid,
                                 Status = RawPrinter.CanOpen(p.QueueName)
                                     ? "Bereit"
                                     : "Nicht verfügbar"
@@ -371,6 +379,31 @@ public sealed class ServerWorker : BackgroundService
                             Success = false,
                             Status = "Fehler",
                             Message = "Der angeforderte Drucker ist auf dem Server nicht freigegeben."
+                        },
+                        ct);
+                    return;
+                }
+
+                var routeGuard = await PrinterRouteGuard.CheckAsync(printer.QueueName);
+                if (!routeGuard.Safe)
+                {
+                    var reason = string.IsNullOrWhiteSpace(routeGuard.Reason)
+                        ? "Druckauftrag aus Sicherheitsgründen blockiert."
+                        : routeGuard.Reason;
+
+                    _log.Error(
+                        $"Druckjob {jobId} von {remote} blockiert",
+                        new InvalidOperationException(reason));
+
+                    await Protocol.WriteJobAckAsync(
+                        stream,
+                        new PrintJobAck
+                        {
+                            JobId = jobId,
+                            Success = false,
+                            Status = "Fehler",
+                            Message = reason,
+                            UpdatedAt = DateTimeOffset.Now
                         },
                         ct);
                     return;
