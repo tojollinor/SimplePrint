@@ -9,6 +9,7 @@ $assets = Join-Path $Root "assets"
 New-Item $assets -ItemType Directory -Force | Out-Null
 $pngPath = Join-Path $assets "logo.png"
 $icoPath = Join-Path $assets "app.ico"
+$versionedIcoPath = Join-Path $assets "app-0.1.5.ico"
 
 function New-RoundedPath {
   param(
@@ -195,6 +196,7 @@ public static class SimplePrintIconWriter
 
 Add-Type -TypeDefinition $icoWriter -ReferencedAssemblies System.Drawing
 [SimplePrintIconWriter]::Create($pngPath, $icoPath)
+Copy-Item $icoPath $versionedIcoPath -Force
 
 if (-not (Test-Path $pngPath) -or (Get-Item $pngPath).Length -lt 1000) {
   throw "logo.png konnte nicht korrekt erzeugt werden."
