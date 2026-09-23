@@ -23,8 +23,6 @@ $dataRoot = Join-Path $env:ProgramData 'SimplePrint'
 New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $dataRoot 'Server') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $dataRoot 'Client') -Force | Out-Null
-
-# Die GUIs laufen ohne Administratorrechte und müssen ihre Konfiguration unter ProgramData speichern können.
 & icacls.exe $dataRoot /grant '*S-1-5-32-545:(OI)(CI)M' /T /C | Out-Null
 
 if ($Mode -eq 'Server') {
@@ -33,8 +31,8 @@ if ($Mode -eq 'Server') {
 
   Get-NetFirewallRule -DisplayName 'SimplePrint Discovery' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
   Get-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-  New-NetFirewallRule -DisplayName 'SimplePrint Discovery' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 45880 -Profile Private,Domain | Out-Null
-  New-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 45881 -Profile Private,Domain | Out-Null
+  New-NetFirewallRule -DisplayName 'SimplePrint Discovery' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 45880 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+  New-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 45881 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
 }
 
 if ($Mode -eq 'Client') {
