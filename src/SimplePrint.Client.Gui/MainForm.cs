@@ -8,78 +8,252 @@ public sealed class MainForm : Form
 {
     private readonly Label _agent = new() { AutoSize = true };
     private readonly Label _scan = new() { AutoSize = true };
-    private readonly DataGridView _available = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
-    private readonly DataGridView _installed = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
+    private readonly Label _selectedServer = new() { AutoSize = true, Text = "Kein Server fest ausgewählt" };
+    private readonly DataGridView _serversGrid = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
+    private readonly DataGridView _available = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
+    private readonly DataGridView _installed = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
+    private readonly CheckBox _startup = new() { Text = "SimplePrint Client bei jeder Windows-Anmeldung im Infobereich starten", AutoSize = true };
+    private readonly NotifyIcon _tray;
+
     private ClientConfig _config = new();
     private List<DiscoveredServer> _servers = [];
+    private bool _allowExit;
 
     private sealed record AvailableTag(DiscoveredServer Server, DiscoveredPrinter Printer);
 
     public MainForm()
     {
         Text = "SimplePrint Client";
-        Width = 980; Height = 700; StartPosition = FormStartPosition.CenterScreen;
+        Width = 1000;
+        Height = 700;
+        StartPosition = FormStartPosition.CenterScreen;
         Branding.ApplyApplicationIcon(this);
 
         var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 96, Padding = new Padding(10), ColumnCount = 2, RowCount = 1 };
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         top.Controls.Add(Branding.CreateGuiLogoBox(), 0, 0);
+
         var headerText = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(10, 2, 0, 0) };
         headerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         headerText.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         headerText.Controls.Add(new Label { Text = "SimplePrint Client", AutoSize = true, Font = new Font(Font.FontFamily, 17, FontStyle.Bold), Margin = new Padding(0, 4, 0, 0) }, 0, 0);
-        var status = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = false, WrapContents = false, Margin = new Padding(0) };
-        status.Controls.AddRange([new Label { Text = "Client-Agent:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _agent,
-            new Label { Text = "   Suche:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _scan]);
+        var status = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0) };
+        status.Controls.AddRange([
+            new Label { Text = "Client-Agent:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _agent,
+            new Label { Text = "   Suche:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _scan
+        ]);
         headerText.Controls.Add(status, 0, 1);
         top.Controls.Add(headerText, 1, 0);
 
-        _available.Columns.Add("server", "Server"); _available.Columns.Add("printer", "Verfügbarer Drucker"); _available.Columns.Add("driver", "Treiberhinweis"); _available.Columns.Add("status", "Status");
-        _installed.Columns.Add("printer", "Installierter Drucker"); _installed.Columns.Add("server", "Server"); _installed.Columns.Add("driver", "Treiber"); _installed.Columns.Add("port", "Lokaler Proxy-Port");
+        ConfigureGrids();
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
-        var t1 = new TabPage("Verfügbare Drucker"); var t2 = new TabPage("Installierte Drucker");
-        t1.Controls.Add(_available); t2.Controls.Add(_installed); tabs.TabPages.AddRange([t1, t2]);
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 58, Padding = new Padding(8) };
-        foreach (var b in MakeButtons()) buttons.Controls.Add(b);
-        Controls.Add(tabs); Controls.Add(top); Controls.Add(buttons);
-        Shown += async (_, _) => await RefreshAllAsync();
+        tabs.TabPages.Add(CreateServerTab());
+        tabs.TabPages.Add(CreateAvailableTab());
+        tabs.TabPages.Add(CreateInstalledTab());
+        tabs.TabPages.Add(CreateSettingsTab());
+
+        var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
+        bottom.Controls.Add(MakeButton("Server suchen", async (_, _) => await RefreshAllAsync()));
+        bottom.Controls.Add(MakeButton("Verbindung testen", async (_, _) => await TestConnectionsAsync()));
+        bottom.Controls.Add(MakeButton("Diagnosepaket", async (_, _) => await CreateDiagnosticsAsync()));
+        bottom.Controls.Add(MakeButton("Über", (_, _) => ShowAbout()));
+
+        Controls.Add(tabs);
+        Controls.Add(top);
+        Controls.Add(bottom);
+
+        var trayIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+        var trayMenu = new ContextMenuStrip();
+        trayMenu.Items.Add("SimplePrint Client öffnen", null, (_, _) => ShowFromTray());
+        trayMenu.Items.Add("Server suchen", null, async (_, _) => await RefreshAllAsync());
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add("Beenden", null, (_, _) => ExitApplication());
+        _tray = new NotifyIcon
+        {
+            Icon = (Icon)trayIcon.Clone(),
+            Text = "SimplePrint Client",
+            Visible = true,
+            ContextMenuStrip = trayMenu
+        };
+        _tray.DoubleClick += (_, _) => ShowFromTray();
+
+        Resize += (_, _) =>
+        {
+            if (WindowState == FormWindowState.Minimized) HideToTray();
+        };
+        FormClosing += (_, e) =>
+        {
+            if (_allowExit || e.CloseReason is CloseReason.WindowsShutDown or CloseReason.TaskManagerClosing) return;
+            e.Cancel = true;
+            HideToTray();
+        };
+        FormClosed += (_, _) => _tray.Dispose();
+
+        Shown += async (_, _) =>
+        {
+            await RefreshAllAsync();
+            if (Program.StartInTray) HideToTray();
+        };
     }
 
-    private IEnumerable<Button> MakeButtons()
+    private void ConfigureGrids()
     {
-        Button B(string text, EventHandler click) { var b = new Button { Text = text, AutoSize = true, Height = 32 }; b.Click += click; return b; }
-        return [
-            B("Server suchen", async (_,_) => await RefreshAllAsync()),
-            B("Drucker installieren", async (_,_) => await InstallSelectedAsync()),
-            B("Drucker entfernen", async (_,_) => await RemoveSelectedAsync()),
-            B("Verbindung testen", async (_,_) => await TestConnectionsAsync()),
-            B("Testseite", (_,_) => TestPage()),
-            B("Diagnosepaket", async (_,_) => await CreateDiagnosticsAsync()),
-            B("Über", (_,_) => ShowAbout())
-        ];
+        _serversGrid.Columns.Add("selected", "Verwendet");
+        _serversGrid.Columns.Add("server", "Server");
+        _serversGrid.Columns.Add("ip", "IP-Adresse");
+        _serversGrid.Columns.Add("gateway", "Gateway-Port");
+        _serversGrid.Columns.Add("printers", "Drucker");
+
+        _available.Columns.Add("printer", "Verfügbarer Drucker");
+        _available.Columns.Add("driver", "Treiberhinweis");
+        _available.Columns.Add("status", "Status");
+
+        _installed.Columns.Add("printer", "Installierter Drucker");
+        _installed.Columns.Add("server", "Server");
+        _installed.Columns.Add("driver", "Treiber");
+        _installed.Columns.Add("port", "Lokaler Proxy-Port");
+    }
+
+    private TabPage CreateServerTab()
+    {
+        var tab = new TabPage("Server");
+        var infoPanel = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 64, Padding = new Padding(10), FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        infoPanel.Controls.Add(new Label { AutoSize = true, Text = "Gefundene SimplePrint-Server:" });
+        infoPanel.Controls.Add(_selectedServer);
+
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
+        buttons.Controls.Add(MakeButton("Diesen Server verwenden", (_, _) => UseSelectedServer()));
+        buttons.Controls.Add(MakeButton("Serverauswahl aufheben", (_, _) => ClearServerSelection()));
+        buttons.Controls.Add(MakeButton("Neu suchen", async (_, _) => await RefreshAllAsync()));
+
+        tab.Controls.Add(_serversGrid);
+        tab.Controls.Add(infoPanel);
+        tab.Controls.Add(buttons);
+        return tab;
+    }
+
+    private TabPage CreateAvailableTab()
+    {
+        var tab = new TabPage("Verfügbare Drucker");
+        var info = new Label
+        {
+            Dock = DockStyle.Top,
+            Height = 48,
+            Padding = new Padding(10),
+            Text = "Hier werden ausschließlich die Drucker des fest ausgewählten Servers angezeigt."
+        };
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
+        buttons.Controls.Add(MakeButton("Drucker installieren", async (_, _) => await InstallSelectedAsync()));
+        tab.Controls.Add(_available);
+        tab.Controls.Add(info);
+        tab.Controls.Add(buttons);
+        return tab;
+    }
+
+    private TabPage CreateInstalledTab()
+    {
+        var tab = new TabPage("Installierte Drucker");
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
+        buttons.Controls.Add(MakeButton("Drucker entfernen", async (_, _) => await RemoveSelectedAsync()));
+        buttons.Controls.Add(MakeButton("Testseite", (_, _) => TestPage()));
+        tab.Controls.Add(_installed);
+        tab.Controls.Add(buttons);
+        return tab;
+    }
+
+    private TabPage CreateSettingsTab()
+    {
+        var tab = new TabPage("Allgemein");
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(18) };
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(840, 0),
+            Text = "Der Client-Agent läuft als automatischer Windows-Dienst. Die Oberfläche benötigt im Normalbetrieb keine Administratorrechte. UAC erscheint nur bei systemweiten Änderungen wie Druckerinstallation oder Autostart."
+        });
+        panel.Controls.Add(new Label { Height = 8, AutoSize = false });
+        panel.Controls.Add(_startup);
+        panel.Controls.Add(MakeButton("Autostart übernehmen", async (_, _) => await SaveStartupAsync()));
+        tab.Controls.Add(panel);
+        return tab;
+    }
+
+    private static Button MakeButton(string text, EventHandler click)
+    {
+        var button = new Button { Text = text, AutoSize = true, Height = 32 };
+        button.Click += click;
+        return button;
     }
 
     private async Task RefreshAllAsync()
     {
         _config = JsonStore.LoadOrCreate(AppPaths.ClientConfig, () => new ClientConfig());
+
         var svc = await PowerShellRunner.RunAsync("(Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue).Status");
         _agent.Text = string.IsNullOrWhiteSpace(svc.StdOut) ? "nicht installiert" : svc.StdOut.Trim();
+        _tray.Text = $"SimplePrint Client - {_agent.Text}";
+
         _scan.Text = "suche ...";
-        try { _servers = (await Discovery.DiscoverAsync(_config.DiscoveryPort, 1000)).ToList(); }
-        catch { _servers = []; }
+        try
+        {
+            _servers = (await Discovery.DiscoverAsync(_config.DiscoveryPort, 1200)).ToList();
+        }
+        catch
+        {
+            _servers = [];
+        }
         _scan.Text = _servers.Count == 0 ? "kein Server gefunden" : $"{_servers.Count} Server gefunden";
 
-        _available.Rows.Clear();
+        RefreshServerGrid();
+        RefreshAvailableGrid();
+        RefreshInstalledGrid();
+        _startup.Checked = StartupManager.IsSystemWideEnabled("SimplePrintClientGui");
+    }
+
+    private void RefreshServerGrid()
+    {
+        _serversGrid.Rows.Clear();
         foreach (var s in _servers)
-        foreach (var p in s.Announcement.Printers)
         {
-            var installed = _config.Mappings.Any(m => m.ServerId == s.Announcement.ServerId && m.PrinterId == p.Id);
-            var i = _available.Rows.Add(s.Announcement.ServerName, p.DisplayName + (installed ? "  ✓" : ""), p.DriverName, p.Status);
-            _available.Rows[i].Tag = new AvailableTag(s, p);
+            var preferred = _config.PreferredServerId == s.Announcement.ServerId;
+            var i = _serversGrid.Rows.Add(preferred ? "✓" : "", s.Announcement.ServerName, s.Address.ToString(), s.Announcement.GatewayPort, s.Announcement.Printers.Count);
+            _serversGrid.Rows[i].Tag = s;
+            if (preferred) _serversGrid.Rows[i].DefaultCellStyle.Font = new Font(_serversGrid.Font, FontStyle.Bold);
         }
 
+        if (_config.PreferredServerId is Guid id)
+        {
+            var found = _servers.FirstOrDefault(x => x.Announcement.ServerId == id);
+            _selectedServer.Text = found is null
+                ? $"Fest ausgewählter Server: {id} (aktuell nicht gefunden)"
+                : $"Fest ausgewählter Server: {found.Announcement.ServerName} ({found.Address})";
+        }
+        else
+        {
+            _selectedServer.Text = "Kein Server fest ausgewählt";
+        }
+    }
+
+    private void RefreshAvailableGrid()
+    {
+        _available.Rows.Clear();
+        if (_config.PreferredServerId is not Guid preferredId) return;
+
+        var server = _servers.FirstOrDefault(s => s.Announcement.ServerId == preferredId);
+        if (server is null) return;
+
+        foreach (var p in server.Announcement.Printers)
+        {
+            var installed = _config.Mappings.Any(m => m.ServerId == server.Announcement.ServerId && m.PrinterId == p.Id);
+            var i = _available.Rows.Add(p.DisplayName + (installed ? "  ✓" : ""), p.DriverName, p.Status);
+            _available.Rows[i].Tag = new AvailableTag(server, p);
+        }
+    }
+
+    private void RefreshInstalledGrid()
+    {
         _installed.Rows.Clear();
         foreach (var m in _config.Mappings)
         {
@@ -88,15 +262,60 @@ public sealed class MainForm : Form
         }
     }
 
+    private void UseSelectedServer()
+    {
+        if (_serversGrid.SelectedRows.Count == 0)
+        {
+            MessageBox.Show("Bitte einen gefundenen Server markieren.");
+            return;
+        }
+
+        var server = (DiscoveredServer)_serversGrid.SelectedRows[0].Tag;
+        _config.PreferredServerId = server.Announcement.ServerId;
+        JsonStore.Save(AppPaths.ClientConfig, _config);
+        RefreshServerGrid();
+        RefreshAvailableGrid();
+        MessageBox.Show($"'{server.Announcement.ServerName}' wird jetzt als fester SimplePrint-Server verwendet.");
+    }
+
+    private void ClearServerSelection()
+    {
+        _config.PreferredServerId = null;
+        JsonStore.Save(AppPaths.ClientConfig, _config);
+        RefreshServerGrid();
+        RefreshAvailableGrid();
+    }
+
     private async Task InstallSelectedAsync()
     {
-        if (_available.SelectedRows.Count == 0) { MessageBox.Show("Bitte einen verfügbaren Drucker auswählen."); return; }
+        if (_config.PreferredServerId is null)
+        {
+            MessageBox.Show("Bitte zuerst im Reiter 'Server' einen Server fest auswählen.");
+            return;
+        }
+
+        if (_available.SelectedRows.Count == 0)
+        {
+            MessageBox.Show("Bitte einen verfügbaren Drucker auswählen.");
+            return;
+        }
+
         var tag = (AvailableTag)_available.SelectedRows[0].Tag;
-        if (_config.Mappings.Any(m => m.ServerId == tag.Server.Announcement.ServerId && m.PrinterId == tag.Printer.Id)) { MessageBox.Show("Dieser Drucker ist bereits installiert."); return; }
+        if (_config.Mappings.Any(m => m.ServerId == tag.Server.Announcement.ServerId && m.PrinterId == tag.Printer.Id))
+        {
+            MessageBox.Show("Dieser Drucker ist bereits installiert.");
+            return;
+        }
+
         try
         {
             var drivers = await PrinterInstaller.GetDriverNamesAsync();
-            if (drivers.Count == 0) { MessageBox.Show("Auf diesem PC wurden keine Druckertreiber gefunden."); return; }
+            if (drivers.Count == 0)
+            {
+                MessageBox.Show("Auf diesem PC wurden keine Druckertreiber gefunden.");
+                return;
+            }
+
             var driver = drivers.FirstOrDefault(d => d.Equals(tag.Printer.DriverName, StringComparison.OrdinalIgnoreCase));
             if (driver is null) driver = ChooseDriver(drivers, tag.Printer.DriverName);
             if (driver is null) return;
@@ -106,6 +325,7 @@ public sealed class MainForm : Form
             var shortPrinter = tag.Printer.Id.ToString("N")[..8];
             var portName = $"SimplePrint_{shortServer}_{shortPrinter}";
             var localName = UniqueLocalName(tag.Printer.DisplayName);
+
             var mapping = new ClientPrinterMapping
             {
                 ServerId = tag.Server.Announcement.ServerId,
@@ -120,16 +340,26 @@ public sealed class MainForm : Form
 
             _config.Mappings.Add(mapping);
             JsonStore.Save(AppPaths.ClientConfig, _config);
-            await Task.Delay(1600); // Agent liest die neue Zuordnung ein und öffnet localhost:Port.
-            try { await PrinterInstaller.InstallAsync(mapping); }
+            await Task.Delay(1600);
+
+            try
+            {
+                await PrinterInstaller.InstallAsync(mapping);
+            }
             catch
             {
-                _config.Mappings.Remove(mapping); JsonStore.Save(AppPaths.ClientConfig, _config); throw;
+                _config.Mappings.Remove(mapping);
+                JsonStore.Save(AppPaths.ClientConfig, _config);
+                throw;
             }
+
             await RefreshAllAsync();
-            MessageBox.Show($"'{localName}' wurde installiert.\n\nDer Drucker verwendet den lokalen Originaltreiber und SimplePrint transportiert nur die RAW-Daten.", "Fertig");
+            MessageBox.Show($"'{localName}' wurde installiert.\n\nDer Hersteller-Treiber rendert genau einmal auf diesem Client. SimplePrint transportiert danach ausschließlich den RAW-Datenstrom.", "Fertig");
         }
-        catch (Exception ex) { MessageBox.Show(ex.Message, "Installation fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Installation fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private string? ChooseDriver(List<string> drivers, string suggested)
@@ -137,10 +367,13 @@ public sealed class MainForm : Form
         using var dlg = new Form { Text = "Druckertreiber auswählen", Width = 700, Height = 210, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
         var info = new Label { Left = 20, Top = 15, Width = 640, Height = 40, Text = $"Der Server verwendet '{suggested}'. Wähle den passenden lokal installierten Treiber:" };
         var combo = new ComboBox { Left = 20, Top = 65, Width = 640, DropDownStyle = ComboBoxStyle.DropDownList };
-        combo.Items.AddRange(drivers.Cast<object>().ToArray()); combo.SelectedIndex = 0;
+        combo.Items.AddRange(drivers.Cast<object>().ToArray());
+        combo.SelectedIndex = 0;
         var ok = new Button { Text = "Verwenden", Left = 470, Top = 110, Width = 90, DialogResult = DialogResult.OK };
         var cancel = new Button { Text = "Abbrechen", Left = 570, Top = 110, Width = 90, DialogResult = DialogResult.Cancel };
-        dlg.Controls.AddRange([info, combo, ok, cancel]); dlg.AcceptButton = ok; dlg.CancelButton = cancel;
+        dlg.Controls.AddRange([info, combo, ok, cancel]);
+        dlg.AcceptButton = ok;
+        dlg.CancelButton = cancel;
         return dlg.ShowDialog(this) == DialogResult.OK ? combo.SelectedItem?.ToString() : null;
     }
 
@@ -150,8 +383,16 @@ public sealed class MainForm : Form
         for (var p = _config.LocalPortStart; p <= _config.LocalPortEnd; p++)
         {
             if (used.Contains(p)) continue;
-            try { var l = new TcpListener(System.Net.IPAddress.Loopback, p); l.Start(); l.Stop(); return p; }
-            catch { }
+            try
+            {
+                var listener = new TcpListener(System.Net.IPAddress.Loopback, p);
+                listener.Start();
+                listener.Stop();
+                return p;
+            }
+            catch
+            {
+            }
         }
         throw new InvalidOperationException("Kein freier lokaler SimplePrint-Port verfügbar.");
     }
@@ -160,49 +401,75 @@ public sealed class MainForm : Form
     {
         var names = _config.Mappings.Select(m => m.LocalPrinterName).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!names.Contains(requested)) return requested;
-        for (var i = 2; i < 100; i++) { var n = $"{requested} ({i})"; if (!names.Contains(n)) return n; }
+        for (var i = 2; i < 100; i++)
+        {
+            var name = $"{requested} ({i})";
+            if (!names.Contains(name)) return name;
+        }
         return requested + " (SimplePrint)";
     }
 
     private async Task RemoveSelectedAsync()
     {
-        if (_installed.SelectedRows.Count == 0) { MessageBox.Show("Bitte einen installierten Drucker auswählen."); return; }
+        if (_installed.SelectedRows.Count == 0)
+        {
+            MessageBox.Show("Bitte einen installierten Drucker auswählen.");
+            return;
+        }
+
         var portName = (string)_installed.SelectedRows[0].Tag;
         var mapping = _config.Mappings.First(m => m.PortName == portName);
         if (MessageBox.Show($"'{mapping.LocalPrinterName}' entfernen?", "Entfernen", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
         try
         {
             await PrinterInstaller.RemoveAsync(mapping);
-            _config.Mappings.Remove(mapping); JsonStore.Save(AppPaths.ClientConfig, _config);
+            _config.Mappings.Remove(mapping);
+            JsonStore.Save(AppPaths.ClientConfig, _config);
             await RefreshAllAsync();
         }
-        catch (Exception ex) { MessageBox.Show(ex.Message, "Entfernen fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Entfernen fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private async Task TestConnectionsAsync()
     {
-        if (_servers.Count == 0)
+        if (_config.PreferredServerId is not Guid preferredId)
+        {
+            MessageBox.Show("Es ist noch kein fester Server ausgewählt.", "Verbindung");
+            return;
+        }
+
+        var server = _servers.FirstOrDefault(s => s.Announcement.ServerId == preferredId);
+        if (server is null)
         {
             await RefreshAllAsync();
-            if (_servers.Count == 0) { MessageBox.Show("Kein SimplePrint-Server gefunden.", "Verbindung"); return; }
+            server = _servers.FirstOrDefault(s => s.Announcement.ServerId == preferredId);
         }
-        var lines = new List<string>();
-        foreach (var s in _servers)
+
+        if (server is null)
         {
-            try
-            {
-                using var tcp = new TcpClient();
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                await tcp.ConnectAsync(s.Address, s.Announcement.GatewayPort, cts.Token);
-                using var stream = tcp.GetStream();
-                await stream.WriteAsync(Protocol.CreateGatewayHeader(Guid.Empty), cts.Token);
-                var reply = new byte[6];
-                var ok = await Protocol.ReadExactAsync(stream, reply, cts.Token) && System.Text.Encoding.ASCII.GetString(reply) == "SPROK1";
-                lines.Add($"{s.Announcement.ServerName} ({s.Address}): {(ok ? "OK" : "keine gültige Antwort")}");
-            }
-            catch (Exception ex) { lines.Add($"{s.Announcement.ServerName} ({s.Address}): FEHLER – {ex.Message}"); }
+            MessageBox.Show("Der ausgewählte SimplePrint-Server wurde aktuell nicht gefunden.", "Verbindung");
+            return;
         }
-        MessageBox.Show(string.Join(Environment.NewLine, lines), "SimplePrint Verbindungstest");
+
+        try
+        {
+            using var tcp = new TcpClient();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await tcp.ConnectAsync(server.Address, server.Announcement.GatewayPort, cts.Token);
+            using var stream = tcp.GetStream();
+            await stream.WriteAsync(Protocol.CreateGatewayHeader(Guid.Empty), cts.Token);
+            var reply = new byte[6];
+            var ok = await Protocol.ReadExactAsync(stream, reply, cts.Token) && System.Text.Encoding.ASCII.GetString(reply) == "SPROK1";
+            MessageBox.Show($"{server.Announcement.ServerName} ({server.Address}): {(ok ? "OK" : "keine gültige Antwort")}", "SimplePrint Verbindungstest");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"{server.Announcement.ServerName} ({server.Address}): FEHLER\n{ex.Message}", "SimplePrint Verbindungstest", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void TestPage()
@@ -210,6 +477,20 @@ public sealed class MainForm : Form
         if (_installed.SelectedRows.Count == 0) return;
         var portName = (string)_installed.SelectedRows[0].Tag;
         PrinterInstaller.PrintTestPage(_config.Mappings.First(m => m.PortName == portName).LocalPrinterName);
+    }
+
+    private async Task SaveStartupAsync()
+    {
+        try
+        {
+            await StartupManager.SetSystemWideAsync("SimplePrintClientGui", Application.ExecutablePath, _startup.Checked);
+            _startup.Checked = StartupManager.IsSystemWideEnabled("SimplePrintClientGui");
+            MessageBox.Show(_startup.Checked ? "Systemweiter GUI-Autostart ist aktiviert." : "Systemweiter GUI-Autostart ist deaktiviert.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Autostart", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void ShowAbout()
@@ -227,11 +508,39 @@ public sealed class MainForm : Form
             using var zip = ZipFile.Open(save.FileName, ZipArchiveMode.Create);
             if (File.Exists(AppPaths.ClientConfig)) zip.CreateEntryFromFile(AppPaths.ClientConfig, "config.json", CompressionLevel.Optimal);
             if (File.Exists(AppPaths.ClientLog)) zip.CreateEntryFromFile(AppPaths.ClientLog, "client.log", CompressionLevel.Optimal);
-            var e = zip.CreateEntry("diagnostics.txt"); using var w = new StreamWriter(e.Open()); await w.WriteAsync(await PrinterInstaller.GetDiagnosticsAsync());
-            var discovery = zip.CreateEntry("discovery.txt"); using var dw = new StreamWriter(discovery.Open());
-            foreach (var s in _servers) await dw.WriteLineAsync($"{s.Announcement.ServerName} {s.Address}:{s.Announcement.GatewayPort} id={s.Announcement.ServerId} printers={s.Announcement.Printers.Count}");
+            var e = zip.CreateEntry("diagnostics.txt");
+            using var w = new StreamWriter(e.Open());
+            await w.WriteAsync(await PrinterInstaller.GetDiagnosticsAsync());
+            var discovery = zip.CreateEntry("discovery.txt");
+            using var dw = new StreamWriter(discovery.Open());
+            foreach (var s in _servers)
+                await dw.WriteLineAsync($"{s.Announcement.ServerName} {s.Address}:{s.Announcement.GatewayPort} id={s.Announcement.ServerId} printers={s.Announcement.Printers.Count}");
             MessageBox.Show("Diagnosepaket wurde erstellt.");
         }
-        catch (Exception ex) { MessageBox.Show(ex.Message, "Diagnose", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Diagnose", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void ShowFromTray()
+    {
+        ShowInTaskbar = true;
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    private void HideToTray()
+    {
+        Hide();
+        ShowInTaskbar = false;
+    }
+
+    private void ExitApplication()
+    {
+        _allowExit = true;
+        _tray.Visible = false;
+        Close();
     }
 }

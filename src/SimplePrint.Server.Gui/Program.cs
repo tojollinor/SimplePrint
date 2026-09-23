@@ -4,9 +4,12 @@ namespace SimplePrint.Server.Gui;
 
 internal static class Program
 {
+    public static bool StartInTray { get; private set; }
+
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
+        StartInTray = args.Any(x => x.Equals("--tray", StringComparison.OrdinalIgnoreCase));
         AppPaths.Ensure();
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm());

@@ -7,10 +7,46 @@ internal static class WinPrinterHelper
 {
     public static async Task<List<LocalPrinterInfo>> GetPrintersAsync()
     {
-        const string script = "ConvertTo-Json -InputObject @(Get-Printer | Select-Object Name,DriverName,PortName,PrinterStatus) -Compress";
+        const string script = "ConvertTo-Json -InputObject @(Get-Printer | Select-Object Name,DriverName,PortName,@{Name='PrinterStatus';Expression={$_.PrinterStatus.ToString()}}) -Compress";
         var r = await PowerShellRunner.RunAsync(script);
         if (r.ExitCode != 0) throw new InvalidOperationException(r.StdErr);
         return JsonSerializer.Deserialize<List<LocalPrinterInfo>>(r.StdOut, JsonStore.Options) ?? [];
+    }
+
+    public static async Task<(bool Discovery, bool Gateway)> GetFirewallStateAsync()
+    {
+        const string script = @"
+$d = Get-NetFirewallRule -DisplayName 'SimplePrint Discovery' -ErrorAction SilentlyContinue
+$g = Get-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -ErrorAction SilentlyContinue
+'Discovery=' + [bool]($d -and $d.Enabled -eq 'True')
+'Gateway=' + [bool]($g -and $g.Enabled -eq 'True')
+";
+        var r = await PowerShellRunner.RunAsync(script);
+        var lines = r.StdOut.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        bool Parse(string key) => lines.Any(x => x.Trim().Equals(key + "=True", StringComparison.OrdinalIgnoreCase));
+        return (Parse("Discovery"), Parse("Gateway"));
+    }
+
+    public static Task ApplyFirewallAsync()
+    {
+        const string script = @"
+$ErrorActionPreference='Stop'
+Get-NetFirewallRule -DisplayName 'SimplePrint Discovery' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+Get-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+New-NetFirewallRule -DisplayName 'SimplePrint Discovery' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 45880 -Profile Private,Domain | Out-Null
+New-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 45881 -Profile Private,Domain | Out-Null
+";
+        return PrivilegeHelper.RunPowerShellElevatedAsync(script);
+    }
+
+    public static Task RemoveFirewallAsync()
+    {
+        const string script = @"
+$ErrorActionPreference='Stop'
+Get-NetFirewallRule -DisplayName 'SimplePrint Discovery' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+Get-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+";
+        return PrivilegeHelper.RunPowerShellElevatedAsync(script);
     }
 
     public static async Task<string> GetDiagnosticsAsync()
@@ -31,19 +67,6 @@ Get-NetUDPEndpoint -LocalPort 45880 -ErrorAction SilentlyContinue | Format-Table
 ";
         var r = await PowerShellRunner.RunAsync(script);
         return r.StdOut + Environment.NewLine + r.StdErr;
-    }
-
-    public static async Task RepairFirewallAsync()
-    {
-        var script = @"
-$ErrorActionPreference='Stop'
-Get-NetFirewallRule -DisplayName 'SimplePrint Discovery' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-Get-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName 'SimplePrint Discovery' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 45880 -Profile Private,Domain | Out-Null
-New-NetFirewallRule -DisplayName 'SimplePrint Print Gateway' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 45881 -Profile Private,Domain | Out-Null
-";
-        var r = await PowerShellRunner.RunAsync(script);
-        if (r.ExitCode != 0) throw new InvalidOperationException(r.StdErr);
     }
 
     public static void PrintTestPage(string printerName)

@@ -25,6 +25,7 @@ public sealed class ClientConfig
     public int DiscoveryPort { get; set; } = Protocol.DefaultDiscoveryPort;
     public int LocalPortStart { get; set; } = 19100;
     public int LocalPortEnd { get; set; } = 19999;
+    public Guid? PreferredServerId { get; set; }
     public List<ClientPrinterMapping> Mappings { get; set; } = [];
 }
 

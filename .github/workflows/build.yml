@@ -39,16 +39,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          [xml]$props = Get-Content "Directory.Build.props"
+          $version = [string]$props.Project.PropertyGroup.Version
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "Version konnte nicht ermittelt werden." }
+          $tag = "v$version"
           $installer = Get-ChildItem "dist\Installer\*.exe" | Select-Object -First 1
           if (-not $installer) { throw "Installer wurde nicht gefunden." }
 
-          $releaseExists = gh release list --json tagName --jq 'any(.tagName == "v0.1.0")'
-          if ($releaseExists -eq "true") {
-            gh release upload v0.1.0 "$($installer.FullName)" --clobber
+          $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          $exists = $null -ne ($releases | Where-Object { $_.tagName -eq $tag } | Select-Object -First 1)
+
+          if ($exists) {
+            gh release upload $tag "$($installer.FullName)" --clobber
           }
           else {
-            gh release create v0.1.0 "$($installer.FullName)" `
-              --title "SimplePrint 0.1.0" `
+            gh release create $tag "$($installer.FullName)" `
+              --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "Erste veröffentlichte SimplePrint-Version mit getrenntem Server und Client, automatischer Server-Erkennung, Druckerverwaltung und Windows-Installer."
+              --notes "SimplePrint $version: überarbeitete Server- und Client-Oberflächen, feste Serverauswahl, Druckerauswahl per Häkchen, Firewall-Verwaltung, Tray-Autostart, normale GUI ohne dauerhafte Administratorrechte und RAW-Drucktransport."
           }

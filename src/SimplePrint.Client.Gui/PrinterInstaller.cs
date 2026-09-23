@@ -12,7 +12,7 @@ internal static class PrinterInstaller
         return JsonSerializer.Deserialize<List<string>>(r.StdOut, JsonStore.Options) ?? [];
     }
 
-    public static async Task InstallAsync(ClientPrinterMapping mapping)
+    public static Task InstallAsync(ClientPrinterMapping mapping)
     {
         var script = $@"
 $ErrorActionPreference='Stop'
@@ -28,22 +28,20 @@ if(Get-Printer -Name $printer -ErrorAction SilentlyContinue) {{
   Add-Printer -Name $printer -DriverName $driver -PortName $port
 }}
 ";
-        var r = await PowerShellRunner.RunAsync(script);
-        if (r.ExitCode != 0) throw new InvalidOperationException(r.StdErr);
+        return PrivilegeHelper.RunPowerShellElevatedAsync(script);
     }
 
-    public static async Task RemoveAsync(ClientPrinterMapping mapping)
+    public static Task RemoveAsync(ClientPrinterMapping mapping)
     {
         var script = $@"
-$ErrorActionPreference='Continue'
+$ErrorActionPreference='Stop'
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $port={PowerShellRunner.Quote(mapping.PortName)}
 Remove-Printer -Name $printer -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 Remove-PrinterPort -Name $port -ErrorAction SilentlyContinue
 ";
-        var r = await PowerShellRunner.RunAsync(script);
-        if (r.ExitCode != 0) throw new InvalidOperationException(r.StdErr);
+        return PrivilegeHelper.RunPowerShellElevatedAsync(script);
     }
 
     public static async Task<string> GetDiagnosticsAsync()

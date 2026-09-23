@@ -19,6 +19,14 @@ function Ensure-Service([string]$Name, [string]$DisplayName, [string]$BinaryPath
   Start-Service -Name $Name
 }
 
+$dataRoot = Join-Path $env:ProgramData 'SimplePrint'
+New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $dataRoot 'Server') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $dataRoot 'Client') -Force | Out-Null
+
+# Die GUIs laufen ohne Administratorrechte und müssen ihre Konfiguration unter ProgramData speichern können.
+& icacls.exe $dataRoot /grant '*S-1-5-32-545:(OI)(CI)M' /T /C | Out-Null
+
 if ($Mode -eq 'Server') {
   $exe = Join-Path $AppPath 'Server\Service\SimplePrint.Server.Service.exe'
   Ensure-Service 'SimplePrintServer' 'SimplePrint Server' $exe 'Empfängt SimplePrint-RAW-Druckjobs und übergibt sie unverändert an lokale Windows-Drucker.'
