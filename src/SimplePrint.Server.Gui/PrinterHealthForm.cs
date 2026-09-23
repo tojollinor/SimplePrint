@@ -63,6 +63,10 @@ internal sealed class PrinterHealthForm : Form
             list.Items.Add(new ListViewItem([name, string.IsNullOrWhiteSpace(value) ? "Nicht verfügbar" : value]));
 
         Add("Drucker", status.PrinterName);
+        if (!string.IsNullOrWhiteSpace(status.ClientTransportStatus))
+            Add("Client-Pfad", status.ClientTransportStatus);
+        if (!string.IsNullOrWhiteSpace(status.ServerTransportStatus))
+            Add("Server-Pfad", status.ServerTransportStatus);
         Add("Windows-Warteschlange", status.QueueExists ? "Vorhanden" : "Fehlt");
         Add("Queue-Status", status.QueueStatus);
         Add("Treiber", status.DriverName);
