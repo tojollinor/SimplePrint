@@ -148,6 +148,7 @@ public sealed class MainForm : Form
         _installed.Columns.Add("driver", "Treiber");
         _installed.Columns.Add("port", "Lokaler Proxy-Port");
 
+        _jobs.Columns.Add("id", "Job-ID");
         _jobs.Columns.Add("time", "Zeit");
         _jobs.Columns.Add("printer", "Drucker");
         _jobs.Columns.Add("server", "Server");
@@ -408,6 +409,7 @@ public sealed class MainForm : Form
         foreach (var job in jobs.OrderByDescending(x => x.CreatedAt).Take(100))
         {
             var row = _jobs.Rows.Add(
+                job.JobId.ToString("N")[..8],
                 job.CreatedAt.ToLocalTime().ToString("dd.MM. HH:mm:ss"),
                 string.IsNullOrWhiteSpace(job.LocalPrinterName) ? job.PrinterName : job.LocalPrinterName,
                 job.ServerName,
@@ -516,6 +518,18 @@ public sealed class MainForm : Form
         var driver = drivers.FirstOrDefault(d => d.Equals(tag.Printer.DriverName, StringComparison.OrdinalIgnoreCase));
         if (driver is null) driver = ChooseDriver(drivers, tag.Printer.DriverName);
         if (driver is null) return;
+
+        if (driver.Contains("IPP Class Driver", StringComparison.OrdinalIgnoreCase))
+        {
+            var answer = MessageBox.Show(
+                "Der ausgewählte Treiber ist ein Microsoft IPP Class Driver.\r\n\r\nDieser Treiber erwartet normalerweise eine echte IPP-Verbindung zum Drucker. SimplePrint stellt dagegen einen RAW-Tunnel bereit. Dadurch kann der Drucker zwar installiert werden, aber der Ausdruck fehlschlagen.\r\n\r\nEmpfohlen wird ein Hersteller-PCL6- oder PostScript-Treiber.\r\n\r\nTrotzdem mit diesem Treiber fortfahren?",
+                "Treiberhinweis",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (answer != DialogResult.Yes)
+                return;
+        }
 
         var localPort = AllocatePort();
         var shortServer = tag.Server.Announcement.ServerId.ToString("N")[..8];
