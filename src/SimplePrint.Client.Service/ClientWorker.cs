@@ -316,131 +316,169 @@ public sealed class ClientWorker : BackgroundService
         TcpClient local,
         CancellationToken ct)
     {
-        var jobId = Guid.NewGuid();
-
-        var record = new PrintJobRecord
-        {
-            JobId = jobId,
-            ClientId = _config.ClientId,
-            ClientName = Environment.MachineName,
-            ServerId = mapping.ServerId,
-            ServerName = mapping.ServerName,
-            PrinterId = mapping.PrinterId,
-            PrinterName = mapping.PrinterDisplayName,
-            LocalPrinterName = mapping.LocalPrinterName,
-            Status = "Warteschlange",
-            Message = "Windows hat einen Auftrag an den lokalen SimplePrint-Proxy übergeben.",
-            CreatedAt = DateTimeOffset.Now,
-            UpdatedAt = DateTimeOffset.Now
-        };
-
-        _jobs[jobId] = record;
-        await SaveJobsAsync();
-
         using (local)
         {
             try
             {
-                if (!_servers.TryGetValue(mapping.ServerId, out var endpoint) ||
-                    DateTimeOffset.Now - endpoint.SeenAt > TimeSpan.FromMinutes(2))
-                {
-                    await DiscoverNowAsync(ct);
-                    _servers.TryGetValue(mapping.ServerId, out endpoint);
-                }
-
-                if (endpoint is null)
-                    throw new InvalidOperationException($"Server '{mapping.ServerName}' wurde im Netzwerk nicht gefunden.");
-
-                record.Status = "Verbinde";
-                record.Message = $"Verbindung zu {endpoint.ServerName} wird aufgebaut.";
-                record.UpdatedAt = DateTimeOffset.Now;
-                await SaveJobsAsync();
-
-                using var remote = new TcpClient { NoDelay = true };
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeout.CancelAfter(TimeSpan.FromSeconds(8));
-
-                await remote.ConnectAsync(
-                    endpoint.Address,
-                    endpoint.GatewayPort,
-                    timeout.Token);
-
                 using var source = local.GetStream();
-                using var target = remote.GetStream();
 
-                await target.WriteAsync(
-                    Protocol.CreateGatewayHeader(mapping.PrinterId, jobId),
-                    ct);
-
-                record.Status = "Überträgt";
-                record.Message = $"Druckdaten werden an {endpoint.ServerName} übertragen.";
-                record.UpdatedAt = DateTimeOffset.Now;
-                await SaveJobsAsync();
-
+                // Windows' Standard-TCP/IP-Portmonitor öffnet regelmäßig reine
+                // Prüfverbindungen ohne Druckdaten. Diese dürfen niemals als
+                // Druckauftrag an den Server weitergereicht werden.
                 var buffer = new byte[64 * 1024];
-                long total = 0;
+                int firstRead;
 
-                while (true)
+                using (var firstByteTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
-                    var read = await source.ReadAsync(buffer, ct);
-                    if (read == 0) break;
+                    firstByteTimeout.CancelAfter(TimeSpan.FromSeconds(5));
 
-                    await target.WriteAsync(buffer.AsMemory(0, read), ct);
-                    total += read;
+                    try
+                    {
+                        firstRead = await source.ReadAsync(buffer, firstByteTimeout.Token);
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        _log.Info($"{mapping.LocalPrinterName}: leere/zeitüberschrittene Portmonitor-Verbindung ignoriert.");
+                        return;
+                    }
                 }
 
-                await target.FlushAsync(ct);
+                if (firstRead == 0)
+                {
+                    _log.Info($"{mapping.LocalPrinterName}: leere Portmonitor-Verbindung ignoriert.");
+                    return;
+                }
+
+                var jobId = Guid.NewGuid();
+
+                var record = new PrintJobRecord
+                {
+                    JobId = jobId,
+                    ClientId = _config.ClientId,
+                    ClientName = Environment.MachineName,
+                    ServerId = mapping.ServerId,
+                    ServerName = mapping.ServerName,
+                    PrinterId = mapping.PrinterId,
+                    PrinterName = mapping.PrinterDisplayName,
+                    LocalPrinterName = mapping.LocalPrinterName,
+                    Status = "Warteschlange",
+                    Message = "Windows hat Druckdaten an den lokalen SimplePrint-Proxy übergeben.",
+                    CreatedAt = DateTimeOffset.Now,
+                    UpdatedAt = DateTimeOffset.Now
+                };
+
+                _jobs[jobId] = record;
+                await SaveJobsAsync();
 
                 try
                 {
-                    remote.Client.Shutdown(SocketShutdown.Send);
+                    if (!_servers.TryGetValue(mapping.ServerId, out var endpoint) ||
+                        DateTimeOffset.Now - endpoint.SeenAt > TimeSpan.FromMinutes(2))
+                    {
+                        await DiscoverNowAsync(ct);
+                        _servers.TryGetValue(mapping.ServerId, out endpoint);
+                    }
+
+                    if (endpoint is null)
+                        throw new InvalidOperationException($"Server '{mapping.ServerName}' wurde im Netzwerk nicht gefunden.");
+
+                    record.Status = "Verbinde";
+                    record.Message = $"Verbindung zu {endpoint.ServerName} wird aufgebaut.";
+                    record.UpdatedAt = DateTimeOffset.Now;
+                    await SaveJobsAsync();
+
+                    using var remote = new TcpClient { NoDelay = true };
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    timeout.CancelAfter(TimeSpan.FromSeconds(8));
+
+                    await remote.ConnectAsync(
+                        endpoint.Address,
+                        endpoint.GatewayPort,
+                        timeout.Token);
+
+                    using var target = remote.GetStream();
+
+                    await target.WriteAsync(
+                        Protocol.CreateGatewayHeader(mapping.PrinterId, jobId),
+                        ct);
+
+                    record.Status = "Überträgt";
+                    record.Message = $"Druckdaten werden an {endpoint.ServerName} übertragen.";
+                    record.UpdatedAt = DateTimeOffset.Now;
+                    await SaveJobsAsync();
+
+                    long total = firstRead;
+                    await target.WriteAsync(buffer.AsMemory(0, firstRead), ct);
+
+                    while (true)
+                    {
+                        var read = await source.ReadAsync(buffer, ct);
+                        if (read == 0) break;
+
+                        await target.WriteAsync(buffer.AsMemory(0, read), ct);
+                        total += read;
+                    }
+
+                    await target.FlushAsync(ct);
+
+                    try
+                    {
+                        remote.Client.Shutdown(SocketShutdown.Send);
+                    }
+                    catch
+                    {
+                    }
+
+                    record.Bytes = total;
+                    record.Status = "Übertragen";
+                    record.Message = $"{total:N0} Byte wurden vollständig an den Server übertragen.";
+                    record.UpdatedAt = DateTimeOffset.Now;
+                    await SaveJobsAsync();
+
+                    using var ackTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    ackTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+
+                    var ack = await Protocol.ReadJobAckAsync(target, ackTimeout.Token);
+
+                    if (ack is null)
+                        throw new InvalidOperationException("Der Server hat den Druckauftrag nicht bestätigt.");
+
+                    ApplyAck(record, ack);
+                    await SaveJobsAsync();
+
+                    _log.Info(
+                        $"{mapping.LocalPrinterName}: Job {jobId} mit {total:N0} Byte -> {endpoint.ServerName}/{mapping.PrinterDisplayName}, Serverstatus={record.Status}.");
                 }
-                catch
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    record.Status = "Fehler";
+                    record.Message = "Zeitüberschreitung bei der Druckübertragung oder Serverbestätigung.";
+                    record.UpdatedAt = DateTimeOffset.Now;
+                    await SaveJobsAsync();
+
+                    _log.Error(
+                        $"Weiterleitung für '{mapping.LocalPrinterName}' fehlgeschlagen",
+                        new TimeoutException(record.Message));
+                }
+                catch (OperationCanceledException)
                 {
                 }
+                catch (Exception ex)
+                {
+                    record.Status = "Fehler";
+                    record.Message = ex.Message;
+                    record.UpdatedAt = DateTimeOffset.Now;
+                    await SaveJobsAsync();
 
-                record.Bytes = total;
-                record.Status = "Übertragen";
-                record.Message = $"{total:N0} Byte wurden vollständig an den Server übertragen.";
-                record.UpdatedAt = DateTimeOffset.Now;
-                await SaveJobsAsync();
-
-                using var ackTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                ackTimeout.CancelAfter(TimeSpan.FromSeconds(20));
-
-                var ack = await Protocol.ReadJobAckAsync(target, ackTimeout.Token);
-
-                if (ack is null)
-                    throw new InvalidOperationException("Der Server hat den Druckauftrag nicht bestätigt.");
-
-                ApplyAck(record, ack);
-                await SaveJobsAsync();
-
-                _log.Info(
-                    $"{mapping.LocalPrinterName}: Job {jobId} mit {total:N0} Byte -> {endpoint.ServerName}/{mapping.PrinterDisplayName}, Serverstatus={record.Status}.");
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                record.Status = "Fehler";
-                record.Message = "Zeitüberschreitung bei der Druckübertragung oder Serverbestätigung.";
-                record.UpdatedAt = DateTimeOffset.Now;
-                await SaveJobsAsync();
-
-                _log.Error(
-                    $"Weiterleitung für '{mapping.LocalPrinterName}' fehlgeschlagen",
-                    new TimeoutException(record.Message));
+                    _log.Error($"Weiterleitung für '{mapping.LocalPrinterName}' fehlgeschlagen", ex);
+                }
             }
             catch (OperationCanceledException)
             {
             }
             catch (Exception ex)
             {
-                record.Status = "Fehler";
-                record.Message = ex.Message;
-                record.UpdatedAt = DateTimeOffset.Now;
-                await SaveJobsAsync();
-
-                _log.Error($"Weiterleitung für '{mapping.LocalPrinterName}' fehlgeschlagen", ex);
+                _log.Error($"Lokale Verbindung für '{mapping.LocalPrinterName}' fehlgeschlagen", ex);
             }
         }
     }
