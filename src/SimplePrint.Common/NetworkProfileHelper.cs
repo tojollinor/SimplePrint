@@ -24,7 +24,12 @@ foreach($p in $profiles) {
         if (lines.Length == 0 || lines.Any(x => x.Trim().Equals("NONE", StringComparison.OrdinalIgnoreCase)))
             return new NetworkProfileState(false, "Kein aktives Windows-Netzwerkprofil gefunden.");
 
-        var isPublic = lines.Any(x => x.EndsWith("|Public", StringComparison.OrdinalIgnoreCase));
-        return new NetworkProfileState(isPublic, string.Join(Environment.NewLine, lines));
+        var hasAllowedProfile = lines.Any(x =>
+            x.EndsWith("|Private", StringComparison.OrdinalIgnoreCase) ||
+            x.EndsWith("|DomainAuthenticated", StringComparison.OrdinalIgnoreCase));
+        var hasPublicProfile = lines.Any(x => x.EndsWith("|Public", StringComparison.OrdinalIgnoreCase));
+
+        // Blockieren nur, wenn tatsächlich ausschließlich öffentliche Profile zur Verfügung stehen.
+        return new NetworkProfileState(!hasAllowedProfile && hasPublicProfile, string.Join(Environment.NewLine, lines));
     }
 }
