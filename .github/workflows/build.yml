@@ -5,6 +5,9 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -30,3 +33,22 @@ jobs:
           path: |
             dist/Server/**
             dist/Client/**
+      - name: Publish GitHub Release
+        if: contains(github.event.head_commit.message, '[release]')
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $installer = Get-ChildItem "dist\Installer\*.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Installer wurde nicht gefunden." }
+
+          gh release view v0.1.0 *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload v0.1.0 "$($installer.FullName)" --clobber
+          }
+          else {
+            gh release create v0.1.0 "$($installer.FullName)" `
+              --title "SimplePrint 0.1.0" `
+              --target "$env:GITHUB_SHA" `
+              --notes "Erste veröffentlichte SimplePrint-Version mit getrenntem Server und Client, automatischer Server-Erkennung, Druckerverwaltung und Windows-Installer."
+          }
