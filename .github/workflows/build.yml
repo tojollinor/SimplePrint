@@ -57,5 +57,5 @@ jobs:
             gh release create $tag "$($installer.FullName)" `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: Hotfix für leere Windows-Portmonitor-Verbindungen, korrigierte Druckerporterstellung ohne ungültigen SNMP-Parameter, vereinfachter Status Auftrag an Drucker gesendet, überarbeiteter Über-Dialog und reparierte Server-Diagnoseausgabe."
+              --notes "SimplePrint ${version}: End-to-End-Druckbereitschaft mit Ampelstatus, SNMP- und Printer-MIB-Abfrage, Toner/Papier/Gerätestatus, Versions- und Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Jobhistorienverwaltung, erweiterte Diagnosepakete und Treiberwarnungen."
           }

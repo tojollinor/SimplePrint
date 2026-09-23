@@ -1,4 +1,4 @@
-# SimplePrint 0.1.7
+# SimplePrint 0.2.0
 
 Kleiner Windows-Druckserver für genau einen Zweck: **Drucken ohne Rendering-Veränderung**, plus Diagnose.
 
@@ -34,7 +34,7 @@ USB-/lokaler Drucker
 
 ## Installation aus fertigem Setup
 
-1. Auf dem Druckserver `SimplePrint-Setup-0.1.7.exe` starten und **PrintServer** auswählen.
+1. Auf dem Druckserver `SimplePrint-Setup-0.2.0.exe` starten und **PrintServer** auswählen.
 2. `SimplePrint Server` öffnen und den lokal installierten Drucker über **Drucker hinzufügen** freigeben.
 3. Auf einem Windows-10/11-Client dasselbe Setup starten und **PrintClient** auswählen.
 4. `SimplePrint Client` öffnen. Der Server sollte automatisch erscheinen.
@@ -59,7 +59,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 Die veröffentlichten Programme landen in `dist\`. Wenn Inno Setup vorhanden ist, entsteht zusätzlich:
 
 ```text
-dist\Installer\SimplePrint-Setup-0.1.7.exe
+dist\Installer\SimplePrint-Setup-0.2.0.exe
 ```
 
 ## Diagnose
@@ -84,7 +84,9 @@ Beim Brother DCP-L2510D sollte auf dem **Client der native Brother-Treiber** aus
 
 ## Stand
 
-Die aktuelle Fassung ist `0.1.7`. Der Hotfix verwirft leere Windows-Portmonitor-Prüfverbindungen vor der Job-Erzeugung und zusätzlich serverseitig vor dem Spooler, korrigiert die Druckerporterstellung, vereinfacht den Abschlussstatus zu `Auftrag an Drucker gesendet`, verbessert den Über-Dialog und repariert die Server-Diagnoseausgabe. Besonders GDI-Treiber können herstellerspezifisches Verhalten haben. Die Diagnosefunktionen sind genau dafür eingebaut.
+Die aktuelle Fassung ist `0.2.0`. Sie erweitert SimplePrint um eine echte End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
+
+Zusätzlich enthalten sind Versions-/Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Druckauftrags-Historienverwaltung, erweiterte Diagnosepakete, generische Class-Driver-Warnungen und Ampelstatus im Tray.
 
 ## Logo und Branding
 
@@ -113,3 +115,25 @@ Windows-Warteschlange
 Hinweis: **„Gedruckt“** wird nur angezeigt, wenn der Windows-Spooler diesen Status tatsächlich meldet. Verschwindet ein Auftrag nach erfolgreicher Übergabe aus der Warteschlange, ohne dass der Drucker einen separaten Printed-Status liefert, zeigt SimplePrint **„Abgeschlossen“**. Das bestätigt den Abschluss im Windows-Drucksystem, nicht mechanisch das Vorhandensein eines Blattes im Ausgabefach.
 
 Für den RAW-Tunnel werden Hersteller-PCL6- oder PostScript-Treiber empfohlen. Der Microsoft IPP Class Driver kann eine echte IPP-Gegenstelle erwarten und wird deshalb in der Schnelldiagnose entsprechend gekennzeichnet.
+
+
+## Druckbereitschaft in 0.2.0
+
+Die Prüfung unterscheidet zwischen:
+
+- **Grün / Bereit:** keine bekannten Hindernisse
+- **Gelb / Warnung:** Drucken wahrscheinlich möglich, aber z. B. generischer Treiber, niedriger Toner oder unvollständige Gerätestatusdaten
+- **Rot / Nicht druckbereit:** Queue fehlt/pausiert/offline, Gerät nicht erreichbar oder kritischer Gerätestatus
+
+Bei Netzwerkdruckern versucht SimplePrint zusätzlich:
+
+- Ping
+- TCP-Verbindung zum Druckerport
+- SNMP v1 über UDP 161
+- Host-Resources Printer Status
+- Printer-MIB Fehlerstatus
+- Verbrauchsmaterialbeschreibung, Maximalstand und aktuellen Stand
+
+Bei USB-, WSD- oder sonstigen lokalen Druckern stehen nur die Informationen zur Verfügung, die Windows bzw. der installierte Treiber an den Spooler zurückmeldet.
+
+Eine grüne Prüfung bedeutet: **Nach allem technisch Abfragbaren sollte der Druckpfad funktionieren.** Sie kann ohne tatsächlichen Ausdruck nicht mechanisch bestätigen, dass ein Blatt Papier aus dem Gerät gekommen ist.
