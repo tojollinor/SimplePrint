@@ -57,7 +57,9 @@ $ErrorActionPreference='Continue'
 Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,CsName | Format-List | Out-String
 '=== SERVICE ==='
 Get-Service -Name SimplePrintServer -ErrorAction SilentlyContinue | Format-List * | Out-String
-'=== NETWORK PROFILE ==='\nGet-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4Connectivity -AutoSize | Out-String\n'=== PRINTERS ==='
+'=== NETWORK PROFILE ==='
+Get-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4Connectivity -AutoSize | Out-String
+'=== PRINTERS ==='
 Get-Printer | Format-Table Name,DriverName,PortName,PrinterStatus -AutoSize | Out-String
 '=== FIREWALL ==='
 Get-NetFirewallRule -DisplayName 'SimplePrint*' -ErrorAction SilentlyContinue | Select-Object DisplayName,Enabled,Profile,Direction,Action | Format-Table -AutoSize | Out-String
