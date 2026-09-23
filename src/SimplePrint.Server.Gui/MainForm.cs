@@ -15,7 +15,8 @@ public sealed class MainForm : Form
     private readonly Label _network = new() { AutoSize = true };
     private readonly CheckedListBox _printers = new() { Dock = DockStyle.Fill, CheckOnClick = true, HorizontalScrollbar = true };
     private readonly DataGridView _firewall = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false };
-    private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };\n    private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
+    private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };
+    private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
     private readonly NotifyIcon _tray;
     private ServerConfig _config = new();
     private List<LocalPrinterInfo> _localPrinters = [];
