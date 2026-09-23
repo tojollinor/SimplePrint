@@ -15,14 +15,20 @@ internal static class PrinterInstaller
     public static Task InstallAsync(ClientPrinterMapping mapping)
     {
         var script = $@"
-$ErrorActionPreference='Stop'
 $port={PowerShellRunner.Quote(mapping.PortName)}
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $driver={PowerShellRunner.Quote(mapping.DriverName)}
+
+$existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+if($existing -and $existing.PortName -ne $port) {{
+  throw "Der Drucker '$printer' existiert bereits und gehört nicht zu SimplePrint. Er wird nicht verändert."
+}}
+
 if(-not (Get-PrinterPort -Name $port -ErrorAction SilentlyContinue)) {{
   Add-PrinterPort -Name $port -PrinterHostAddress '127.0.0.1' -PortNumber {mapping.LocalProxyPort}
 }}
-if(Get-Printer -Name $printer -ErrorAction SilentlyContinue) {{
+
+if($existing) {{
   Set-Printer -Name $printer -DriverName $driver -PortName $port
 }} else {{
   Add-Printer -Name $printer -DriverName $driver -PortName $port
@@ -34,12 +40,32 @@ if(Get-Printer -Name $printer -ErrorAction SilentlyContinue) {{
     public static Task RemoveAsync(ClientPrinterMapping mapping)
     {
         var script = $@"
-$ErrorActionPreference='Stop'
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $port={PowerShellRunner.Quote(mapping.PortName)}
-Remove-Printer -Name $printer -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 300
-Remove-PrinterPort -Name $port -ErrorAction SilentlyContinue
+
+$existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+if($existing) {{
+  if($existing.PortName -ne $port) {{
+    throw "Der Drucker '$printer' verwendet nicht den erwarteten SimplePrint-Port. Er wird aus Sicherheitsgründen nicht gelöscht."
+  }}
+  Remove-Printer -Name $printer -ErrorAction Stop
+}}
+
+for($i=0; $i -lt 10; $i++) {{
+  if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{ break }}
+  Start-Sleep -Milliseconds 250
+}}
+
+$portObject = Get-PrinterPort -Name $port -ErrorAction SilentlyContinue
+if($portObject) {{
+  try {{
+    Remove-PrinterPort -Name $port -ErrorAction Stop
+  }}
+  catch {{
+    # Die Queue ist bereits sicher entfernt. Ein noch kurz gesperrter Proxy-Port
+    # darf den gesamten Entfernen-Vorgang nicht wieder als fehlgeschlagen markieren.
+  }}
+}}
 ";
         return PrivilegeHelper.RunPowerShellElevatedAsync(script);
     }
@@ -50,10 +76,12 @@ Remove-PrinterPort -Name $port -ErrorAction SilentlyContinue
 $ErrorActionPreference='Continue'
 '=== SYSTEM ==='
 Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,CsName | Format-List | Out-String
+'=== NETWORK PROFILE ==='
+Get-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4Connectivity,IPv6Connectivity -AutoSize | Out-String
 '=== CLIENT AGENT ==='
 Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue | Format-List * | Out-String
 '=== SIMPLEPRINT PRINTERS ==='
-Get-Printer | Where-Object PortName -Like 'SimplePrint_*' | Format-Table Name,DriverName,PortName,PrinterStatus -AutoSize | Out-String
+Get-Printer | Where-Object { $_.PortName -Like 'SimplePrint_*' -or $_.Name -Like '* (SimplePrint)*' } | Format-Table Name,DriverName,PortName,PrinterStatus -AutoSize | Out-String
 '=== PORTS ==='
 Get-PrinterPort | Where-Object Name -Like 'SimplePrint_*' | Format-Table Name,PrinterHostAddress,PortNumber,SNMPEnabled -AutoSize | Out-String
 ";
