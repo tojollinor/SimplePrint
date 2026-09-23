@@ -25,7 +25,7 @@ if($existing -and $existing.PortName -ne $port) {{
 }}
 
 if(-not (Get-PrinterPort -Name $port -ErrorAction SilentlyContinue)) {{
-  Add-PrinterPort -Name $port -PrinterHostAddress '127.0.0.1' -PortNumber {mapping.LocalProxyPort}
+  Add-PrinterPort -Name $port -PrinterHostAddress '127.0.0.1' -PortNumber {mapping.LocalProxyPort} -SNMP 0
 }}
 
 if($existing) {{
@@ -68,6 +68,48 @@ if($portObject) {{
 }}
 ";
         return PrivilegeHelper.RunPowerShellElevatedAsync(script);
+    }
+
+    public static async Task<string> GetQuickDiagnosisAsync(ClientPrinterMapping mapping)
+    {
+        var script = $@"
+$ErrorActionPreference='Continue'
+$printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+$port={PowerShellRunner.Quote(mapping.PortName)}
+$proxyPort={mapping.LocalProxyPort}
+
+'=== DIENST ==='
+$svc = Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue
+if($svc) {{ 'SimplePrintClient: ' + $svc.Status }} else {{ 'SimplePrintClient: NICHT INSTALLIERT' }}
+
+'=== WINDOWS-DRUCKER ==='
+$p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+if($p) {{
+  'Queue: ' + $p.Name
+  'Treiber: ' + $p.DriverName
+  'Port: ' + $p.PortName
+  'Status: ' + $p.PrinterStatus
+  if($p.PortName -eq $port) {{ 'Queue-Zuordnung: OK' }} else {{ 'Queue-Zuordnung: FEHLER' }}
+}} else {{
+  'Queue: NICHT GEFUNDEN'
+}}
+
+'=== SIMPLEPRINT-PORT ==='
+$pp = Get-PrinterPort -Name $port -ErrorAction SilentlyContinue
+if($pp) {{
+  'Port vorhanden: JA'
+  'Ziel: ' + $pp.PrinterHostAddress + ':' + $pp.PortNumber
+  'SNMP: ' + $pp.SNMPEnabled
+}} else {{
+  'Port vorhanden: NEIN'
+}}
+
+'=== LOKALER PROXY ==='
+$listen = Get-NetTCPConnection -State Listen -LocalPort $proxyPort -ErrorAction SilentlyContinue
+if($listen) {{ '127.0.0.1:' + $proxyPort + ' lauscht: JA' }} else {{ '127.0.0.1:' + $proxyPort + ' lauscht: NEIN' }}
+";
+        var r = await PowerShellRunner.RunAsync(script);
+        return r.StdOut + Environment.NewLine + r.StdErr;
     }
 
     public static async Task<string> GetDiagnosticsAsync()
