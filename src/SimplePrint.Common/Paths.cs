@@ -10,6 +10,8 @@ public static class AppPaths
     public static string ServerLog => Path.Combine(ServerRoot, "server.log");
     public static string ServerClients => Path.Combine(ServerRoot, "clients.json");
     public static string ClientLog => Path.Combine(ClientRoot, "client.log");
+    public static string ClientJobs => Path.Combine(ClientRoot, "jobs.json");
+    public static string ServerJobs => Path.Combine(ServerRoot, "jobs.json");
 
     public static void Ensure()
     {
