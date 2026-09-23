@@ -10,7 +10,7 @@ internal static class Program
     static void Main(string[] args)
     {
         StartInTray = args.Any(x => x.Equals("--tray", StringComparison.OrdinalIgnoreCase));
-        WindowsAppIdentity.Set("SimplePrint.Server.0_1_6");
+        WindowsAppIdentity.Set("SimplePrint.Server.0_2_0");
         AppPaths.Ensure();
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm());
