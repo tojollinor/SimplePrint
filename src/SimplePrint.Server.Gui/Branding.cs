@@ -5,7 +5,7 @@ namespace SimplePrint.Server.Gui;
 internal static class Branding
 {
     private const string EmbeddedLogoResource = "SimplePrint.DefaultLogo.png";
-    private const string FixedIconName = "app-0.1.5.ico";
+    private const string FixedIconName = "app-0.1.6.ico";
 
     public static void ApplyApplicationIcon(Form form)
     {
