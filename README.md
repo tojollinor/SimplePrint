@@ -92,7 +92,7 @@ Zusätzlich enthalten sind Versions-/Protokollkompatibilität, verifizierte Fire
 
 SimplePrint trennt das feste Programm-Icon vom austauschbaren Logo in der Oberfläche:
 
-- `assets\app.ico` wird beim Build fest in Client-/Server-GUI und Installer eingebettet. Es wird für EXE, Taskleiste, Fenstersymbol und den **Über**-Dialog verwendet und ändert sich nach der Installation nicht.
+- `assets\app.ico` bzw. das versionierte ICO wird für EXE, Taskleiste, Fenstersymbol, Tray und Verknüpfungen verwendet. Der **Über**-Dialog verwendet dagegen das hochauflösend eingebettete Standard-PNG, damit das Logo auch groß scharf bleibt.
 - Das sichtbare Logo im Kopfbereich von Client- und Server-GUI wird aus `{Installationsordner}\assets\logo.png` geladen.
 - `logo.png` kann nach der Installation durch eine eigene PNG-Datei ersetzt werden. Beim nächsten Start der GUI wird das neue Bild angezeigt.
 - Fehlt `logo.png` oder ist die Datei beschädigt, verwendet die GUI automatisch das intern eingebettete Standardlogo.
@@ -134,6 +134,6 @@ Bei Netzwerkdruckern versucht SimplePrint zusätzlich:
 - Printer-MIB Fehlerstatus
 - Verbrauchsmaterialbeschreibung, Maximalstand und aktuellen Stand
 
-Bei USB-, WSD- oder sonstigen lokalen Druckern stehen nur die Informationen zur Verfügung, die Windows bzw. der installierte Treiber an den Spooler zurückmeldet.
+Bei USB-, WSD- oder sonstigen lokalen Druckern stehen nur die Informationen zur Verfügung, die Windows bzw. der installierte Treiber bereitstellt. SNMP-Werte werden nur bei erreichbaren Netzwerkdruckern angezeigt; fehlende Werte werden nicht geschätzt oder erfunden.er an den Spooler zurückmeldet.
 
 Eine grüne Prüfung bedeutet: **Nach allem technisch Abfragbaren sollte der Druckpfad funktionieren.** Sie kann ohne tatsächlichen Ausdruck nicht mechanisch bestätigen, dass ein Blatt Papier aus dem Gerät gekommen ist.
