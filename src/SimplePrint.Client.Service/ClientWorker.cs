@@ -27,19 +27,25 @@ public sealed class ClientWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         LoadConfig(true);
-        _log.Info("Client-Agent gestartet.");
+        _log.Info($"Client-Agent gestartet. ClientId={_config.ClientId}");
         await SyncListenersAsync(stoppingToken);
 
-        var discover = DiscoveryLoopAsync(stoppingToken);
-        var reload = ReloadLoopAsync(stoppingToken);
-        await Task.WhenAll(discover, reload);
+        await Task.WhenAll(
+            DiscoveryLoopAsync(stoppingToken),
+            ReloadLoopAsync(stoppingToken));
     }
 
     private void LoadConfig(bool force = false)
     {
-        var w = File.Exists(AppPaths.ClientConfig) ? File.GetLastWriteTimeUtc(AppPaths.ClientConfig) : DateTime.MinValue;
-        if (!force && w == _writeUtc) return;
+        var write = File.Exists(AppPaths.ClientConfig) ? File.GetLastWriteTimeUtc(AppPaths.ClientConfig) : DateTime.MinValue;
+        if (!force && write == _writeUtc) return;
+
         _config = JsonStore.LoadOrCreate(AppPaths.ClientConfig, () => new ClientConfig());
+        if (_config.ClientId == Guid.Empty)
+        {
+            _config.ClientId = Guid.NewGuid();
+            JsonStore.Save(AppPaths.ClientConfig, _config);
+        }
         _writeUtc = File.GetLastWriteTimeUtc(AppPaths.ClientConfig);
     }
 
@@ -58,16 +64,36 @@ public sealed class ClientWorker : BackgroundService
     {
         while (!ct.IsCancellationRequested)
         {
+            await SendHeartbeatAsync(ct);
             await DiscoverNowAsync(ct);
-            await Task.Delay(TimeSpan.FromSeconds(20), ct);
+            await Task.Delay(TimeSpan.FromSeconds(10), ct);
         }
+    }
+
+    private async Task SendHeartbeatAsync(CancellationToken ct)
+    {
+        try
+        {
+            var v = typeof(ClientWorker).Assembly.GetName().Version;
+            var heartbeat = new ClientHeartbeat
+            {
+                ClientId = _config.ClientId,
+                ClientName = Environment.MachineName,
+                AgentVersion = v is null ? "unbekannt" : $"{v.Major}.{v.Minor}.{v.Build}",
+                PreferredServerId = _config.PreferredServerId,
+                InstalledPrinterCount = _config.Mappings.Count(x => x.Enabled)
+            };
+            await Discovery.SendClientHeartbeatAsync(heartbeat, _config.DiscoveryPort, _config.ManualServer, ct);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _log.Error("Client-Lebenszeichen fehlgeschlagen", ex); }
     }
 
     private async Task DiscoverNowAsync(CancellationToken ct)
     {
         try
         {
-            var servers = await Discovery.DiscoverAsync(_config.DiscoveryPort, 800, ct);
+            var servers = await Discovery.DiscoverAsync(_config.DiscoveryPort, 1000, ct, _config.ManualServer);
             foreach (var s in servers)
                 _servers[s.Announcement.ServerId] = new Endpoint(s.Address, s.Announcement.GatewayPort, s.SeenAt, s.Announcement.ServerName);
         }
@@ -80,11 +106,12 @@ public sealed class ClientWorker : BackgroundService
         lock (_sync)
         {
             var wanted = _config.Mappings.Where(m => m.Enabled).ToDictionary(m => m.PortName, StringComparer.OrdinalIgnoreCase);
+
             foreach (var old in _listeners.Keys.Where(k => !wanted.ContainsKey(k)).ToList())
             {
-                var s = _listeners[old];
-                s.Cts.Cancel();
-                s.Listener.Stop();
+                var state = _listeners[old];
+                state.Cts.Cancel();
+                state.Listener.Stop();
                 _listeners.Remove(old);
                 _log.Info($"Lokaler Proxy gestoppt: {old}");
             }
@@ -93,18 +120,33 @@ public sealed class ClientWorker : BackgroundService
             {
                 if (_listeners.TryGetValue(m.PortName, out var existing))
                 {
-                    if (existing.Mapping.LocalProxyPort == m.LocalProxyPort && existing.Mapping.ServerId == m.ServerId && existing.Mapping.PrinterId == m.PrinterId) continue;
-                    existing.Cts.Cancel(); existing.Listener.Stop(); _listeners.Remove(m.PortName);
+                    if (existing.Mapping.LocalProxyPort == m.LocalProxyPort &&
+                        existing.Mapping.ServerId == m.ServerId &&
+                        existing.Mapping.PrinterId == m.PrinterId)
+                        continue;
+
+                    existing.Cts.Cancel();
+                    existing.Listener.Stop();
+                    _listeners.Remove(m.PortName);
                 }
 
                 var linked = CancellationTokenSource.CreateLinkedTokenSource(serviceCt);
                 var listener = new TcpListener(IPAddress.Loopback, m.LocalProxyPort);
                 listener.Start(16);
                 var task = Task.Run(() => AcceptLoopAsync(m, listener, linked.Token), CancellationToken.None);
-                _listeners[m.PortName] = new ListenerState { Mapping = m, Listener = listener, Cts = linked, Task = task };
+
+                _listeners[m.PortName] = new ListenerState
+                {
+                    Mapping = m,
+                    Listener = listener,
+                    Cts = linked,
+                    Task = task
+                };
+
                 _log.Info($"Lokaler Proxy {m.LocalProxyPort} -> {m.ServerName}/{m.PrinterDisplayName} aktiv.");
             }
         }
+
         return Task.CompletedTask;
     }
 
@@ -129,20 +171,25 @@ public sealed class ClientWorker : BackgroundService
         {
             try
             {
-                if (!_servers.TryGetValue(mapping.ServerId, out var endpoint) || DateTimeOffset.Now - endpoint.SeenAt > TimeSpan.FromMinutes(2))
+                if (!_servers.TryGetValue(mapping.ServerId, out var endpoint) ||
+                    DateTimeOffset.Now - endpoint.SeenAt > TimeSpan.FromMinutes(2))
                 {
                     await DiscoverNowAsync(ct);
                     _servers.TryGetValue(mapping.ServerId, out endpoint);
                 }
-                if (endpoint is null) throw new InvalidOperationException($"Server '{mapping.ServerName}' wurde im Netzwerk nicht gefunden.");
+
+                if (endpoint is null)
+                    throw new InvalidOperationException($"Server '{mapping.ServerName}' wurde im Netzwerk nicht gefunden.");
 
                 using var remote = new TcpClient { NoDelay = true };
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeout.CancelAfter(TimeSpan.FromSeconds(8));
                 await remote.ConnectAsync(endpoint.Address, endpoint.GatewayPort, timeout.Token);
+
                 using var source = local.GetStream();
                 using var target = remote.GetStream();
                 await target.WriteAsync(Protocol.CreateGatewayHeader(mapping.PrinterId), ct);
+
                 var buffer = new byte[64 * 1024];
                 long total = 0;
                 while (true)
@@ -152,6 +199,7 @@ public sealed class ClientWorker : BackgroundService
                     await target.WriteAsync(buffer.AsMemory(0, read), ct);
                     total += read;
                 }
+
                 await target.FlushAsync(ct);
                 try { remote.Client.Shutdown(SocketShutdown.Send); } catch { }
                 _log.Info($"{mapping.LocalPrinterName}: {total:N0} Byte an {endpoint.ServerName}/{mapping.PrinterDisplayName} übertragen.");
