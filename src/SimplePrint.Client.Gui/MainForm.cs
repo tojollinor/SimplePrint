@@ -326,10 +326,22 @@ public sealed class MainForm : Form
         try
         {
             _servers = (await Discovery.DiscoverAsync(_config.DiscoveryPort, 1500, default, _config.ManualServer)).ToList();
-            _scan.Text = _servers.Count == 0 ? "kein Server gefunden" : $"{_servers.Count} Server gefunden";
+            var incompatible = _servers.Count(x => x.Announcement.Version != Protocol.Version);
+            _scan.Text = _servers.Count == 0
+                ? "kein Server gefunden"
+                : incompatible == 0
+                    ? $"{_servers.Count} Server gefunden"
+                    : $"{_servers.Count} gefunden · {incompatible} inkompatibel";
+
             RefreshServerGrid();
             RefreshAvailableGrid();
-            SetStatus(_servers.Count == 0 ? "Kein Server gefunden." : $"✓ {_servers.Count} Server gefunden.");
+
+            SetStatus(
+                _servers.Count == 0
+                    ? "Kein Server gefunden."
+                    : incompatible == 0
+                        ? $"✓ {_servers.Count} Server gefunden."
+                        : $"⚠ {_servers.Count} Server gefunden, davon {incompatible} inkompatibel.");
         }
         catch (Exception ex)
         {
@@ -358,20 +370,43 @@ public sealed class MainForm : Form
     private void RefreshServerGrid()
     {
         _serversGrid.Rows.Clear();
-        foreach (var s in _servers)
+
+        foreach (var server in _servers)
         {
-            var preferred = _config.PreferredServerId == s.Announcement.ServerId;
-            var i = _serversGrid.Rows.Add(preferred ? "✓" : "", s.Announcement.ServerName, s.Address.ToString(), s.Announcement.GatewayPort, s.Announcement.Printers.Count);
-            _serversGrid.Rows[i].Tag = s;
-            if (preferred) _serversGrid.Rows[i].DefaultCellStyle.Font = new Font(_serversGrid.Font, FontStyle.Bold);
+            var preferred = _config.PreferredServerId == server.Announcement.ServerId;
+            var compatible = server.Announcement.Version == Protocol.Version;
+
+            var row = _serversGrid.Rows.Add(
+                preferred ? "✓" : "",
+                server.Announcement.ServerName,
+                server.Address.ToString(),
+                server.Announcement.GatewayPort,
+                string.IsNullOrWhiteSpace(server.Announcement.AppVersion)
+                    ? "unbekannt"
+                    : server.Announcement.AppVersion,
+                server.Announcement.Version,
+                compatible ? "OK" : $"benötigt P{Protocol.Version}",
+                server.Announcement.Printers.Count);
+
+            _serversGrid.Rows[row].Tag = server;
+
+            if (preferred)
+                _serversGrid.Rows[row].DefaultCellStyle.Font =
+                    new Font(_serversGrid.Font, FontStyle.Bold);
+
+            if (!compatible)
+                _serversGrid.Rows[row].DefaultCellStyle.ForeColor = Color.DarkRed;
         }
 
         if (_config.PreferredServerId is Guid id)
         {
             var found = _servers.FirstOrDefault(x => x.Announcement.ServerId == id);
+
             _selectedServer.Text = found is null
                 ? $"Fest ausgewählter Server: {id} (aktuell nicht gefunden)"
-                : $"Fest ausgewählter Server: {found.Announcement.ServerName} ({found.Address})";
+                : found.Announcement.Version == Protocol.Version
+                    ? $"Fest ausgewählter Server: {found.Announcement.ServerName} ({found.Address}) · kompatibel"
+                    : $"Fest ausgewählter Server: {found.Announcement.ServerName} ({found.Address}) · INKOMPATIBEL P{found.Announcement.Version}";
         }
         else
         {
@@ -382,16 +417,37 @@ public sealed class MainForm : Form
     private void RefreshAvailableGrid()
     {
         _available.Rows.Clear();
-        if (_config.PreferredServerId is not Guid preferredId) return;
 
-        var server = _servers.FirstOrDefault(s => s.Announcement.ServerId == preferredId);
-        if (server is null) return;
+        if (_config.PreferredServerId is not Guid preferredId)
+            return;
 
-        foreach (var p in server.Announcement.Printers)
+        var server = _servers.FirstOrDefault(
+            x => x.Announcement.ServerId == preferredId);
+
+        if (server is null)
+            return;
+
+        if (server.Announcement.Version != Protocol.Version)
         {
-            var installed = _config.Mappings.Any(m => m.ServerId == server.Announcement.ServerId && m.PrinterId == p.Id);
-            var i = _available.Rows.Add(installed, p.DisplayName, p.DriverName, p.Status);
-            _available.Rows[i].Tag = new AvailableTag(server, p);
+            SetStatus(
+                $"⚠ Server '{server.Announcement.ServerName}' verwendet Protokoll {server.Announcement.Version}; benötigt wird {Protocol.Version}.");
+            return;
+        }
+
+        foreach (var printer in server.Announcement.Printers)
+        {
+            var installed = _config.Mappings.Any(
+                m => m.ServerId == server.Announcement.ServerId &&
+                     m.PrinterId == printer.Id);
+
+            var row = _available.Rows.Add(
+                installed,
+                printer.DisplayName,
+                printer.DriverName,
+                printer.Status);
+
+            _available.Rows[row].Tag =
+                new AvailableTag(server, printer);
         }
     }
 
@@ -446,12 +502,28 @@ public sealed class MainForm : Form
         }
 
         var server = (DiscoveredServer)_serversGrid.SelectedRows[0].Tag;
+
+        if (server.Announcement.Version != Protocol.Version)
+        {
+            MessageBox.Show(
+                $"Dieser Server verwendet SimplePrint-Protokoll {server.Announcement.Version}. " +
+                $"Der Client benötigt Protokoll {Protocol.Version}.\r\n\r\n" +
+                "Bitte Client und Server auf dieselbe SimplePrint-Version aktualisieren.",
+                "Inkompatibler Server",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
         _config.PreferredServerId = server.Announcement.ServerId;
         JsonStore.Save(AppPaths.ClientConfig, _config);
+
         RefreshServerGrid();
         RefreshAvailableGrid();
+
         SetStatus($"✓ Server '{server.Announcement.ServerName}' ausgewählt.");
-        MessageBox.Show($"'{server.Announcement.ServerName}' wird jetzt als fester SimplePrint-Server verwendet.");
+        MessageBox.Show(
+            $"'{server.Announcement.ServerName}' wird jetzt als fester SimplePrint-Server verwendet.");
     }
 
     private void ClearServerSelection()
