@@ -22,10 +22,12 @@ public sealed class SharedPrinterConfig
 
 public sealed class ClientConfig
 {
+    public Guid ClientId { get; set; } = Guid.NewGuid();
     public int DiscoveryPort { get; set; } = Protocol.DefaultDiscoveryPort;
     public int LocalPortStart { get; set; } = 19100;
     public int LocalPortEnd { get; set; } = 19999;
     public Guid? PreferredServerId { get; set; }
+    public string ManualServer { get; set; } = "";
     public List<ClientPrinterMapping> Mappings { get; set; } = [];
 }
 
@@ -61,6 +63,28 @@ public sealed class DiscoveredPrinter
 }
 
 public sealed record DiscoveredServer(DiscoveryAnnouncement Announcement, IPAddress Address, DateTimeOffset SeenAt);
+
+public sealed class ClientHeartbeat
+{
+    public string Magic { get; set; } = Protocol.ClientHeartbeatMagic;
+    public int Version { get; set; } = Protocol.Version;
+    public Guid ClientId { get; set; }
+    public string ClientName { get; set; } = "";
+    public string AgentVersion { get; set; } = "";
+    public Guid? PreferredServerId { get; set; }
+    public int InstalledPrinterCount { get; set; }
+}
+
+public sealed class ClientPresence
+{
+    public Guid ClientId { get; set; }
+    public string ClientName { get; set; } = "";
+    public string Address { get; set; } = "";
+    public string AgentVersion { get; set; } = "";
+    public Guid? PreferredServerId { get; set; }
+    public int InstalledPrinterCount { get; set; }
+    public DateTimeOffset LastSeen { get; set; }
+}
 
 public sealed class LocalPrinterInfo
 {
