@@ -703,10 +703,73 @@ public sealed class MainForm : Form
                 ? $"Server '{mapping.ServerName}': aktuell nicht per Discovery gefunden"
                 : $"Server '{server.Announcement.ServerName}': {server.Address}:{server.Announcement.GatewayPort} gefunden";
 
+            var gatewayState = "Gateway-Test: nicht möglich";
+
+            if (server is not null)
+            {
+                try
+                {
+                    using var tcp = new TcpClient();
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+
+                    await tcp.ConnectAsync(
+                        server.Address,
+                        server.Announcement.GatewayPort,
+                        timeout.Token);
+
+                    using var stream = tcp.GetStream();
+                    await stream.WriteAsync(
+                        Protocol.CreateGatewayHeader(Guid.Empty),
+                        timeout.Token);
+
+                    var reply = new byte[6];
+                    var ok = await Protocol.ReadExactAsync(stream, reply, timeout.Token) &&
+                             System.Text.Encoding.ASCII.GetString(reply) == "SPROK1";
+
+                    gatewayState = ok
+                        ? "Gateway-Test: OK"
+                        : "Gateway-Test: ungültige Serverantwort";
+                }
+                catch (Exception ex)
+                {
+                    gatewayState = "Gateway-Test: FEHLER - " + ex.Message;
+                }
+            }
+
+            List<PrintJobRecord> jobs;
+            try
+            {
+                jobs = JsonStore.LoadOrCreate(
+                    AppPaths.ClientJobs,
+                    () => new List<PrintJobRecord>());
+            }
+            catch
+            {
+                jobs = [];
+            }
+
+            var recent = jobs
+                .Where(x => x.PrinterId == mapping.PrinterId &&
+                            x.ServerId == mapping.ServerId)
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(5)
+                .ToList();
+
+            var jobLines = recent.Count == 0
+                ? "Keine bisherigen Druckaufträge für diesen Drucker gespeichert."
+                : string.Join(
+                    Environment.NewLine,
+                    recent.Select(x =>
+                        $"{x.JobId.ToString("N")[..8]} · {x.CreatedAt.ToLocalTime():HH:mm:ss} · {x.Status} · {x.Message}"));
+
             SetStatus("✓ Schnelldiagnose abgeschlossen.");
 
             MessageBox.Show(
-                serverState + Environment.NewLine + Environment.NewLine + local,
+                serverState + Environment.NewLine +
+                gatewayState + Environment.NewLine + Environment.NewLine +
+                local + Environment.NewLine +
+                "=== LETZTE DRUCKAUFTRÄGE ===" + Environment.NewLine +
+                jobLines,
                 "SimplePrint Schnelldiagnose",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
