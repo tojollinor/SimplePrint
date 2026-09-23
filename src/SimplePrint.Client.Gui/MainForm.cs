@@ -155,7 +155,8 @@ public sealed class MainForm : Form
             Text = "Hier werden ausschließlich die Drucker des fest ausgewählten Servers angezeigt."
         };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
-        buttons.Controls.Add(MakeButton("Aktualisieren", async (_, _) => await RefreshAvailablePrintersAsync()));\n        buttons.Controls.Add(MakeButton("Druckerauswahl speichern", async (_, _) => await SavePrinterSelectionAsync()));
+        buttons.Controls.Add(MakeButton("Aktualisieren", async (_, _) => await RefreshAvailablePrintersAsync()));
+        buttons.Controls.Add(MakeButton("Druckerauswahl speichern", async (_, _) => await SavePrinterSelectionAsync()));
         tab.Controls.Add(_available);
         tab.Controls.Add(info);
         tab.Controls.Add(buttons);
