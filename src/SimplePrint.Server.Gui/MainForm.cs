@@ -15,9 +15,13 @@ public sealed class MainForm : Form
     private readonly Label _network = new() { AutoSize = true };
     private readonly CheckedListBox _printers = new() { Dock = DockStyle.Fill, CheckOnClick = true, HorizontalScrollbar = true };
     private readonly DataGridView _firewall = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false };
+    private readonly DataGridView _clients = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false };
     private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };
     private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
     private readonly NotifyIcon _tray;
+    private readonly ToolStripStatusLabel _operationStatus = new() { Text = "Bereit" };
+    private readonly ToolStripProgressBar _operationProgress = new() { Style = ProgressBarStyle.Marquee, Visible = false, Width = 100 };
+    private bool _publicNetworkWarningShown;
     private ServerConfig _config = new();
     private List<LocalPrinterInfo> _localPrinters = [];
     private bool _allowExit;
@@ -25,13 +29,14 @@ public sealed class MainForm : Form
     public MainForm()
     {
         Text = "SimplePrint Server";
-        Width = 940;
-        Height = 650;
+        Width = 620;
+        Height = 500;
+        MinimumSize = new Size(560, 440);
         StartPosition = FormStartPosition.CenterScreen;
         Branding.ApplyApplicationIcon(this);
 
-        var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 96, Padding = new Padding(10), ColumnCount = 2, RowCount = 1 };
-        top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
+        var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 132, Padding = new Padding(10), ColumnCount = 2, RowCount = 1 };
+        top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         top.Controls.Add(Branding.CreateGuiLogoBox(), 0, 0);
 
@@ -49,6 +54,7 @@ public sealed class MainForm : Form
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(CreatePrinterTab());
+        tabs.TabPages.Add(CreateClientsTab());
         tabs.TabPages.Add(CreateFirewallTab());
         tabs.TabPages.Add(CreateSettingsTab());
 
@@ -57,11 +63,17 @@ public sealed class MainForm : Form
         bottom.Controls.Add(MakeButton("Aktualisieren", async (_, _) => await RefreshAllAsync()));
         bottom.Controls.Add(MakeButton("Über", (_, _) => ShowAbout()));
 
+        var statusStrip = new StatusStrip { SizingGrip = false };
+        statusStrip.Items.Add(_operationStatus);
+        statusStrip.Items.Add(new ToolStripStatusLabel { Spring = true });
+        statusStrip.Items.Add(_operationProgress);
+
         Controls.Add(tabs);
         Controls.Add(top);
         Controls.Add(bottom);
+        Controls.Add(statusStrip);
 
-        var trayIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+        var trayIcon = Branding.LoadFixedIcon() ?? (Icon)SystemIcons.Application.Clone();
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("SimplePrint Server öffnen", null, (_, _) => ShowFromTray());
         trayMenu.Items.Add("Aktualisieren", null, async (_, _) => await RefreshAllAsync());
@@ -110,6 +122,31 @@ public sealed class MainForm : Form
         buttons.Controls.Add(MakeButton("Drucker neu einlesen", async (_, _) => await RefreshPrintersAsync()));
         buttons.Controls.Add(MakeButton("Testseite", (_, _) => TestSelectedPrinter()));
         tab.Controls.Add(_printers);
+        tab.Controls.Add(info);
+        tab.Controls.Add(buttons);
+        return tab;
+    }
+
+    private TabPage CreateClientsTab()
+    {
+        _clients.Columns.Add("status", "Status");
+        _clients.Columns.Add("client", "Client");
+        _clients.Columns.Add("ip", "IP-Adresse");
+        _clients.Columns.Add("version", "Version");
+        _clients.Columns.Add("printers", "Drucker");
+        _clients.Columns.Add("seen", "Letzte Meldung");
+
+        var tab = new TabPage("Clients");
+        var info = new Label
+        {
+            Dock = DockStyle.Top,
+            Height = 48,
+            Padding = new Padding(10),
+            Text = "Client-Agenten melden sich automatisch. Nach 35 Sekunden ohne Lebenszeichen wird ein Client als offline angezeigt."
+        };
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
+        buttons.Controls.Add(MakeButton("Clients aktualisieren", (_, _) => RefreshClients()));
+        tab.Controls.Add(_clients);
         tab.Controls.Add(info);
         tab.Controls.Add(buttons);
         return tab;
@@ -192,6 +229,29 @@ public sealed class MainForm : Form
 
         _tray.Text = $"SimplePrint Server - {_service.Text}";
         RefreshStartupState();
+        RefreshClients();
+
+        var profile = await NetworkProfileHelper.GetStateAsync();
+        if (profile.HasPublicProfile)
+        {
+            _network.Text = "öffentlich (blockiert)";
+            SetStatus("⚠ Öffentliches Netzwerk: SimplePrint ist nicht erreichbar.");
+
+            if (!_publicNetworkWarningShown)
+            {
+                _publicNetworkWarningShown = true;
+                MessageBox.Show(
+                    "Dieses Gerät befindet sich in einem öffentlichen Netzwerk.\r\n\r\nSimplePrint funktioniert nur in privaten oder Domänennetzwerken. Bitte stelle das Windows-Netzwerkprofil auf \"Privat\" oder verbinde den Rechner mit dem Domänennetzwerk.",
+                    "SimplePrint Netzwerk",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+        }
+        else
+        {
+            _publicNetworkWarningShown = false;
+        }
+
         await RefreshFirewallAsync();
     }
 
@@ -251,6 +311,7 @@ public sealed class MainForm : Form
 
             _config.Printers = next;
             JsonStore.Save(AppPaths.ServerConfig, _config);
+            SetStatus($"✓ {next.Count} Druckerfreigabe(n) gespeichert.");
             MessageBox.Show($"{next.Count} Druckerfreigabe(n) gespeichert. Die Clients sehen die Änderung automatisch.", "SimplePrint");
             await RefreshAllAsync();
         }
@@ -270,20 +331,54 @@ public sealed class MainForm : Form
         WinPrinterHelper.PrintTestPage(choice.Info.Name);
     }
 
+    private void RefreshClients()
+    {
+        List<ClientPresence> clients;
+        try
+        {
+            clients = JsonStore.LoadOrCreate(AppPaths.ServerClients, () => new List<ClientPresence>());
+        }
+        catch
+        {
+            clients = [];
+        }
+
+        _clients.Rows.Clear();
+        var now = DateTimeOffset.Now;
+        foreach (var client in clients.OrderBy(x => x.ClientName, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var online = now - client.LastSeen <= TimeSpan.FromSeconds(35);
+            var row = _clients.Rows.Add(
+                online ? "Online" : "Offline",
+                client.ClientName,
+                client.Address,
+                client.AgentVersion,
+                client.InstalledPrinterCount,
+                client.LastSeen.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss"));
+
+            if (!online)
+                _clients.Rows[row].DefaultCellStyle.ForeColor = SystemColors.GrayText;
+        }
+
+        SetStatus($"✓ {clients.Count(x => now - x.LastSeen <= TimeSpan.FromSeconds(35))} Client(s) online.");
+    }
+
     private async Task RefreshFirewallAsync()
     {
         var state = await WinPrinterHelper.GetFirewallStateAsync();
         _firewall.Rows.Clear();
-        _firewall.Rows.Add("SimplePrint Discovery", "Eingehend", "UDP 45880", "Privat, Domäne", state.Discovery ? "aktiv" : "fehlt / inaktiv");
-        _firewall.Rows.Add("SimplePrint Print Gateway", "Eingehend", "TCP 45881", "Privat, Domäne", state.Gateway ? "aktiv" : "fehlt / inaktiv");
+        _firewall.Rows.Add("SimplePrint Discovery", "Eingehend", "UDP 45880", "Privat/Domäne · LocalSubnet", state.Discovery ? "aktiv" : "fehlt / inaktiv");
+        _firewall.Rows.Add("SimplePrint Print Gateway", "Eingehend", "TCP 45881", "Privat/Domäne · LocalSubnet", state.Gateway ? "aktiv" : "fehlt / inaktiv");
     }
 
     private async Task ApplyFirewallAsync()
     {
         try
         {
+            SetBusy("Firewall-Regeln werden angewendet …");
             await WinPrinterHelper.ApplyFirewallAsync();
             await RefreshFirewallAsync();
+            SetStatus("✓ Firewall-Regeln wurden angewendet.");
             MessageBox.Show("Die benötigten SimplePrint-Firewallregeln wurden angewendet.");
         }
         catch (Exception ex)
@@ -297,8 +392,10 @@ public sealed class MainForm : Form
         if (MessageBox.Show("Beide SimplePrint-Firewallregeln entfernen?", "Firewall zurücksetzen", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         try
         {
+            SetBusy("Firewall-Regeln werden entfernt …");
             await WinPrinterHelper.RemoveFirewallAsync();
             await RefreshFirewallAsync();
+            SetStatus("✓ Firewall-Regeln wurden entfernt.");
             MessageBox.Show("Die SimplePrint-Firewallregeln wurden entfernt.");
         }
         catch (Exception ex)
@@ -365,6 +462,26 @@ public sealed class MainForm : Form
     {
         using var dlg = new AboutForm();
         dlg.ShowDialog(this);
+    }
+
+    private void SetBusy(string text)
+    {
+        _operationStatus.Text = text;
+        _operationProgress.Visible = true;
+        UseWaitCursor = true;
+        Application.DoEvents();
+    }
+
+    private void SetIdle()
+    {
+        _operationProgress.Visible = false;
+        UseWaitCursor = false;
+    }
+
+    private void SetStatus(string text)
+    {
+        SetIdle();
+        _operationStatus.Text = text;
     }
 
     private void ShowFromTray()
