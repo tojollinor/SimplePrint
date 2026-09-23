@@ -9,7 +9,7 @@ $assets = Join-Path $Root "assets"
 New-Item $assets -ItemType Directory -Force | Out-Null
 $pngPath = Join-Path $assets "logo.png"
 $icoPath = Join-Path $assets "app.ico"
-$versionedIcoPath = Join-Path $assets "app-0.1.5.ico"
+$versionedIcoPath = Join-Path $assets "app-0.1.6.ico"
 
 function New-RoundedPath {
   param(
