@@ -104,6 +104,14 @@ internal static class RawPrinter
         string documentName,
         CancellationToken ct)
     {
+        var buffer = new byte[64 * 1024];
+        var firstRead = await source.ReadAsync(buffer, ct);
+
+        // Niemals für reine TCP-/Portmonitor-Prüfverbindungen einen
+        // Windows-Spoolerauftrag anlegen.
+        if (firstRead == 0)
+            return new RawPrintResult(0, 0);
+
         if (!OpenPrinter(queueName, out var printer, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), $"Drucker '{queueName}' konnte nicht geöffnet werden.");
 
@@ -128,23 +136,19 @@ internal static class RawPrinter
 
             pageStarted = true;
 
-            var buffer = new byte[64 * 1024];
             long total = 0;
 
-            while (true)
+            void WriteChunk(byte[] data, int count)
             {
-                var read = await source.ReadAsync(buffer, ct);
-                if (read == 0) break;
-
-                var ptr = Marshal.AllocHGlobal(read);
+                var ptr = Marshal.AllocHGlobal(count);
                 try
                 {
-                    Marshal.Copy(buffer, 0, ptr, read);
+                    Marshal.Copy(data, 0, ptr, count);
 
-                    if (!WritePrinter(printer, ptr, read, out var written) || written != read)
+                    if (!WritePrinter(printer, ptr, count, out var written) || written != count)
                         throw new Win32Exception(
                             Marshal.GetLastWin32Error(),
-                            $"WritePrinter fehlgeschlagen ({written}/{read} Byte).");
+                            $"WritePrinter fehlgeschlagen ({written}/{count} Byte).");
 
                     total += written;
                 }
@@ -152,6 +156,16 @@ internal static class RawPrinter
                 {
                     Marshal.FreeHGlobal(ptr);
                 }
+            }
+
+            WriteChunk(buffer, firstRead);
+
+            while (true)
+            {
+                var read = await source.ReadAsync(buffer, ct);
+                if (read == 0) break;
+
+                WriteChunk(buffer, read);
             }
 
             return new RawPrintResult(total, spoolerJobId);
