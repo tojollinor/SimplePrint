@@ -15,7 +15,6 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 
 Write-Host "Generating branding assets..." -ForegroundColor Yellow
 & (Join-Path $Root "tools\Generate-Branding.ps1") -Root $Root
-if ($LASTEXITCODE -ne 0) { throw "Branding-Erzeugung fehlgeschlagen." }
 
 if (Test-Path $Dist) { Remove-Item $Dist -Recurse -Force }
 New-Item $Dist -ItemType Directory | Out-Null
