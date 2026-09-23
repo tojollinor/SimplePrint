@@ -42,8 +42,8 @@ jobs:
           $installer = Get-ChildItem "dist\Installer\*.exe" | Select-Object -First 1
           if (-not $installer) { throw "Installer wurde nicht gefunden." }
 
-          gh release view v0.1.0 *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseExists = gh release list --json tagName --jq 'any(.tagName == "v0.1.0")'
+          if ($releaseExists -eq "true") {
             gh release upload v0.1.0 "$($installer.FullName)" --clobber
           }
           else {
