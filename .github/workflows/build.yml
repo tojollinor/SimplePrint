@@ -57,5 +57,5 @@ jobs:
             gh release create $tag "$($installer.FullName)" `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: automatische Aktualisierung verfügbarer Client-Drucker, Autostart mit Status und getrenntem Aktivieren/Deaktivieren, standardmäßiger Tray-Start, dunkelblaues Multi-Resolution-Druckericon sowie verbesserter Upgrade- und Deinstallationsablauf."
+              --notes "SimplePrint ${version}: robuste LAN-Erkennung, Warnung bei öffentlichen Netzwerkprofilen, Client-Onlineanzeige am Server, eigene Druckerqueues mit (SimplePrint), sichere Druckerentfernung, Lade- und Erfolgsmeldungen, korrigierte Diagnosepakete, kompaktere Fenster und erneuertes Windows-Icon."
           }
