@@ -93,3 +93,33 @@ public sealed class LocalPrinterInfo
     public string PortName { get; set; } = "";
     public string PrinterStatus { get; set; } = "";
 }
+
+
+public sealed class PrintJobRecord
+{
+    public Guid JobId { get; set; }
+    public Guid ClientId { get; set; }
+    public string ClientName { get; set; } = "";
+    public Guid ServerId { get; set; }
+    public string ServerName { get; set; } = "";
+    public Guid PrinterId { get; set; }
+    public string PrinterName { get; set; } = "";
+    public string LocalPrinterName { get; set; } = "";
+    public string Status { get; set; } = "Neu";
+    public string Message { get; set; } = "";
+    public long Bytes { get; set; }
+    public uint? SpoolerJobId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
+}
+
+public sealed class PrintJobAck
+{
+    public Guid JobId { get; set; }
+    public bool Success { get; set; }
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+    public long Bytes { get; set; }
+    public uint? SpoolerJobId { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
+}
