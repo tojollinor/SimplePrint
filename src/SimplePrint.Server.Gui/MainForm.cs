@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text.Json;
 using SimplePrint.Common;
 
 namespace SimplePrint.Server.Gui;
@@ -13,6 +14,7 @@ public sealed class MainForm : Form
 
     private readonly Label _service = new() { AutoSize = true };
     private readonly Label _network = new() { AutoSize = true };
+    private readonly Label _version = new() { AutoSize = true };
     private readonly CheckedListBox _printers = new() { Dock = DockStyle.Fill, CheckOnClick = true, HorizontalScrollbar = true };
     private readonly DataGridView _firewall = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false };
     private readonly DataGridView _clients = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
@@ -49,7 +51,8 @@ public sealed class MainForm : Form
         var status = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0) };
         status.Controls.AddRange([
             new Label { Text = "Dienst:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _service,
-            new Label { Text = "   Netzwerk:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _network
+            new Label { Text = "   Netzwerk:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _network,
+            new Label { Text = "   Version:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _version
         ]);
         headerText.Controls.Add(status, 0, 1);
         top.Controls.Add(headerText, 1, 0);
@@ -135,6 +138,8 @@ public sealed class MainForm : Form
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         buttons.Controls.Add(MakeButton("Auswahl speichern", async (_, _) => await SavePrinterSelectionAsync()));
         buttons.Controls.Add(MakeButton("Drucker neu einlesen", async (_, _) => await RefreshPrintersAsync()));
+        buttons.Controls.Add(MakeButton("Druckbereitschaft", async (_, _) => await ShowSelectedPrinterHealthAsync()));
+        buttons.Controls.Add(MakeButton("Warteschlange öffnen", (_, _) => OpenSelectedPrinterQueue()));
         buttons.Controls.Add(MakeButton("Testseite", (_, _) => TestSelectedPrinter()));
         tab.Controls.Add(_printers);
         tab.Controls.Add(info);
@@ -148,6 +153,8 @@ public sealed class MainForm : Form
         _clients.Columns.Add("client", "Client");
         _clients.Columns.Add("ip", "IP-Adresse");
         _clients.Columns.Add("version", "Version");
+        _clients.Columns.Add("protocol", "Protokoll");
+        _clients.Columns.Add("compat", "Kompatibilität");
         _clients.Columns.Add("printers", "Drucker");
         _clients.Columns.Add("seen", "Letzte Meldung");
 
@@ -191,6 +198,8 @@ public sealed class MainForm : Form
         };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         buttons.Controls.Add(MakeButton("Aktualisieren", (_, _) => RefreshJobsGrid()));
+        buttons.Controls.Add(MakeButton("Abgeschlossene löschen", (_, _) => ClearCompletedJobs()));
+        buttons.Controls.Add(MakeButton("Alle löschen", (_, _) => ClearAllJobs()));
 
         tab.Controls.Add(_jobs);
         tab.Controls.Add(info);
@@ -205,6 +214,7 @@ public sealed class MainForm : Form
         _firewall.Columns.Add("protocol", "Protokoll / Port");
         _firewall.Columns.Add("profile", "Profile");
         _firewall.Columns.Add("state", "Status");
+        _firewall.Columns.Add("details", "Details");
 
         var tab = new TabPage("Firewall");
         var info = new Label
@@ -249,6 +259,7 @@ public sealed class MainForm : Form
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 12, 0, 0) };
         buttons.Controls.Add(MakeButton("Autostart aktivieren", async (_, _) => await SetStartupAsync(true)));
         buttons.Controls.Add(MakeButton("Autostart deaktivieren", async (_, _) => await SetStartupAsync(false)));
+        buttons.Controls.Add(MakeButton("Serverdienst neu starten", async (_, _) => await RestartServerServiceAsync()));
         panel.Controls.Add(buttons);
 
         tab.Controls.Add(panel);
@@ -269,6 +280,11 @@ public sealed class MainForm : Form
 
         var svc = await PowerShellRunner.RunAsync("(Get-Service -Name SimplePrintServer -ErrorAction SilentlyContinue).Status");
         _service.Text = string.IsNullOrWhiteSpace(svc.StdOut) ? "nicht installiert" : svc.StdOut.Trim();
+
+        var assemblyVersion = typeof(MainForm).Assembly.GetName().Version;
+        _version.Text = assemblyVersion is null
+            ? $"unbekannt · P{Protocol.Version}"
+            : $"{assemblyVersion.Major}.{assemblyVersion.Minor}.{assemblyVersion.Build} · P{Protocol.Version}";
 
         var net = await PowerShellRunner.RunAsync("if(Get-NetTCPConnection -LocalPort 45881 -State Listen -ErrorAction SilentlyContinue){'bereit'}else{'nicht bereit'}");
         _network.Text = string.IsNullOrWhiteSpace(net.StdOut) ? "unbekannt" : net.StdOut.Trim();
@@ -300,6 +316,7 @@ public sealed class MainForm : Form
         }
 
         await RefreshFirewallAsync();
+        UpdateTrayStatus();
     }
 
     private async Task RefreshPrintersAsync()
@@ -381,6 +398,72 @@ public sealed class MainForm : Form
         SetStatus($"✓ Testseite für '{choice.Info.Name}' wurde gestartet.");
     }
 
+    private async Task ShowSelectedPrinterHealthAsync()
+    {
+        if (_printers.SelectedItem is not PrinterChoice choice)
+        {
+            MessageBox.Show("Bitte zuerst einen Drucker markieren.");
+            return;
+        }
+
+        SetBusy($"Druckbereitschaft von '{choice.Info.Name}' wird geprüft …");
+
+        try
+        {
+            var configured = _config.Printers.FirstOrDefault(
+                x => x.QueueName.Equals(choice.Info.Name, StringComparison.OrdinalIgnoreCase));
+
+            var health = await WinPrinterHelper.ProbePrinterAsync(
+                choice.Info.Name,
+                configured?.Id ?? Guid.Empty);
+
+            using var dialog = new PrinterHealthForm(health);
+            SetStatus(
+                health.Level == "Green"
+                    ? "✓ Drucker ist bereit."
+                    : health.Level == "Red"
+                        ? "✗ Drucker ist nicht druckbereit."
+                        : "⚠ Druckerstatus enthält Hinweise.");
+            dialog.ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Druckbereitschaft konnte nicht geprüft werden.");
+            MessageBox.Show(
+                ex.Message,
+                "Druckbereitschaft",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private void OpenSelectedPrinterQueue()
+    {
+        if (_printers.SelectedItem is not PrinterChoice choice)
+        {
+            MessageBox.Show("Bitte zuerst einen Drucker markieren.");
+            return;
+        }
+
+        try
+        {
+            WinPrinterHelper.OpenQueue(choice.Info.Name);
+            SetStatus($"✓ Warteschlange '{choice.Info.Name}' geöffnet.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Warteschlange",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    }
+
     private void RefreshClients(bool updateStatus = true)
     {
         List<ClientPresence> clients;
@@ -398,11 +481,14 @@ public sealed class MainForm : Form
         foreach (var client in clients.OrderBy(x => x.ClientName, StringComparer.CurrentCultureIgnoreCase))
         {
             var online = now - client.LastSeen <= TimeSpan.FromSeconds(35);
+            var compatible = client.ProtocolVersion == Protocol.Version;
             var row = _clients.Rows.Add(
                 online ? "Online" : "Offline",
                 client.ClientName,
                 client.Address,
                 client.AgentVersion,
+                client.ProtocolVersion == 0 ? "unbekannt" : client.ProtocolVersion.ToString(),
+                compatible ? "OK" : $"benötigt P{Protocol.Version}",
                 client.InstalledPrinterCount,
                 client.LastSeen.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss"));
 
@@ -447,6 +533,36 @@ public sealed class MainForm : Form
             if (job.Status.Equals("Fehler", StringComparison.OrdinalIgnoreCase))
                 _jobs.Rows[row].DefaultCellStyle.ForeColor = Color.DarkRed;
         }
+    }
+
+    private void ClearCompletedJobs()
+    {
+        var jobs = JsonStore.LoadOrCreate(
+            AppPaths.ServerJobs,
+            () => new List<PrintJobRecord>());
+
+        var completed = new HashSet<string>(
+            ["Gedruckt", "Abgeschlossen", "Ignoriert", "Fehler"],
+            StringComparer.OrdinalIgnoreCase);
+
+        var count = jobs.RemoveAll(x => completed.Contains(x.Status));
+        JsonStore.Save(AppPaths.ServerJobs, jobs);
+        RefreshJobsGrid();
+        SetStatus($"✓ {count} abgeschlossene Druckaufträge gelöscht.");
+    }
+
+    private void ClearAllJobs()
+    {
+        if (MessageBox.Show(
+                "Die gesamte gespeicherte Druckauftragshistorie löschen?",
+                "Druckaufträge löschen",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        JsonStore.Save(AppPaths.ServerJobs, new List<PrintJobRecord>());
+        RefreshJobsGrid();
+        SetStatus("✓ Druckauftragshistorie gelöscht.");
     }
 
     private void DeleteSelectedOfflineClient()
@@ -532,6 +648,7 @@ public sealed class MainForm : Form
             $"Status: {(online ? "Online" : "Offline")}",
             $"Letztes Lebenszeichen: {client.LastSeen.ToLocalTime():dd.MM.yyyy HH:mm:ss}",
             $"Agent-Version: {client.AgentVersion}",
+            $"Protokoll: {client.ProtocolVersion} ({(client.ProtocolVersion == Protocol.Version ? "kompatibel" : $"Server benötigt {Protocol.Version}")})",
             $"Installierte SimplePrint-Drucker: {client.InstalledPrinterCount}",
             "",
             "Letzte Druckaufträge:"
@@ -559,25 +676,64 @@ public sealed class MainForm : Form
     private async Task RefreshFirewallAsync()
     {
         var state = await WinPrinterHelper.GetFirewallStateAsync();
+
         _firewall.Rows.Clear();
-        _firewall.Rows.Add("SimplePrint Discovery", "Eingehend", "UDP 45880", "Privat/Domäne · LocalSubnet", state.Discovery ? "aktiv" : "fehlt / inaktiv");
-        _firewall.Rows.Add("SimplePrint Print Gateway", "Eingehend", "TCP 45881", "Privat/Domäne · LocalSubnet", state.Gateway ? "aktiv" : "fehlt / inaktiv");
-        SetStatus("✓ Firewall-Status aktualisiert.");
+        _firewall.Rows.Add(
+            "SimplePrint Discovery",
+            "Eingehend",
+            "UDP 45880",
+            "Privat/Domäne · LocalSubnet",
+            state.Discovery.Correct ? "korrekt" : state.Discovery.Exists ? "fehlerhaft" : "fehlt",
+            state.Discovery.Detail);
+
+        _firewall.Rows.Add(
+            "SimplePrint Print Gateway",
+            "Eingehend",
+            "TCP 45881",
+            "Privat/Domäne · LocalSubnet",
+            state.Gateway.Correct ? "korrekt" : state.Gateway.Exists ? "fehlerhaft" : "fehlt",
+            state.Gateway.Detail);
+
+        SetStatus(
+            state.Discovery.Correct && state.Gateway.Correct
+                ? "✓ Firewall vollständig verifiziert."
+                : "⚠ Firewall ist nicht vollständig korrekt.");
     }
 
     private async Task ApplyFirewallAsync()
     {
         try
         {
-            SetBusy("Firewall-Regeln werden angewendet …");
+            SetBusy("Firewall-Regeln werden angewendet und verifiziert …");
             await WinPrinterHelper.ApplyFirewallAsync();
+
+            var state = await WinPrinterHelper.GetFirewallStateAsync();
+            if (!state.Discovery.Correct || !state.Gateway.Correct)
+            {
+                throw new InvalidOperationException(
+                    "Windows hat die Firewallregeln nicht wie erforderlich übernommen." +
+                    Environment.NewLine + Environment.NewLine +
+                    "Discovery: " + state.Discovery.Detail +
+                    Environment.NewLine +
+                    "Gateway: " + state.Gateway.Detail);
+            }
+
             await RefreshFirewallAsync();
-            SetStatus("✓ Firewall-Regeln wurden angewendet.");
-            MessageBox.Show("Die benötigten SimplePrint-Firewallregeln wurden angewendet.");
+            SetStatus("✓ Firewall-Regeln angewendet und verifiziert.");
+            MessageBox.Show(
+                "Beide SimplePrint-Firewallregeln wurden angewendet und erfolgreich verifiziert.",
+                "Firewall",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
+            SetStatus("✗ Firewall-Regeln konnten nicht korrekt angewendet werden.");
             MessageBox.Show(ex.Message, "Firewall", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
         }
     }
 
@@ -605,6 +761,31 @@ public sealed class MainForm : Form
         _startup.Checked = enabled
             ? StartupManager.IsTrayModeEnabled("SimplePrintServerGui", true)
             : true;
+    }
+
+    private async Task RestartServerServiceAsync()
+    {
+        try
+        {
+            SetBusy("SimplePrint-Serverdienst wird neu gestartet …");
+            await WinPrinterHelper.RestartServerServiceAsync();
+            await Task.Delay(500);
+            await RefreshAllAsync();
+            SetStatus("✓ SimplePrint-Serverdienst läuft wieder.");
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Serverdienst konnte nicht neu gestartet werden.");
+            MessageBox.Show(
+                ex.Message,
+                "Serverdienst",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
     }
 
     private async Task SetStartupAsync(bool enabled)
@@ -647,8 +828,42 @@ public sealed class MainForm : Form
             AddFile(zip, AppPaths.ServerClients, "clients.json");
             AddFile(zip, AppPaths.ServerJobs, "jobs.json");
             var e = zip.CreateEntry("diagnostics.txt");
-            using var w = new StreamWriter(e.Open());
-            await w.WriteAsync(await WinPrinterHelper.GetDiagnosticsAsync());
+            using (var w = new StreamWriter(e.Open()))
+                await w.WriteAsync(await WinPrinterHelper.GetDiagnosticsAsync());
+
+            var healthResults = new List<PrinterHealthStatus>();
+            foreach (var printer in _config.Printers.Where(x => x.Enabled))
+            {
+                try
+                {
+                    var health = await WinPrinterHelper.ProbePrinterAsync(
+                        printer.QueueName,
+                        printer.Id);
+                    health.PrinterName = string.IsNullOrWhiteSpace(printer.DisplayName)
+                        ? printer.QueueName
+                        : printer.DisplayName;
+                    healthResults.Add(health);
+                }
+                catch (Exception ex)
+                {
+                    healthResults.Add(new PrinterHealthStatus
+                    {
+                        PrinterId = printer.Id,
+                        PrinterName = printer.DisplayName,
+                        QueueName = printer.QueueName,
+                        Level = "Red",
+                        Summary = "Diagnose fehlgeschlagen",
+                        Warnings = [ex.Message]
+                    });
+                }
+            }
+
+            var healthEntry = zip.CreateEntry("printer-health.json");
+            using (var hw = new StreamWriter(healthEntry.Open()))
+                await hw.WriteAsync(JsonSerializer.Serialize(
+                    healthResults,
+                    JsonStore.Options));
+
             SetStatus("✓ Diagnosepaket wurde erstellt.");
             MessageBox.Show("Diagnosepaket wurde erstellt.");
         }
@@ -681,6 +896,33 @@ public sealed class MainForm : Form
     {
         SetIdle();
         _operationStatus.Text = text;
+    }
+
+    private void UpdateTrayStatus()
+    {
+        var serviceOk = _service.Text.Equals("Running", StringComparison.OrdinalIgnoreCase);
+        var networkOk = _network.Text.Equals("bereit", StringComparison.OrdinalIgnoreCase);
+        var hasPrinter = _config.Printers.Any(x => x.Enabled);
+
+        var level = !serviceOk || !networkOk
+            ? "Red"
+            : hasPrinter
+                ? "Green"
+                : "Yellow";
+
+        var next = Branding.CreateStatusIcon(level);
+        if (next is null) return;
+
+        var previous = _tray.Icon;
+        _tray.Icon = next;
+        previous?.Dispose();
+
+        _tray.Text = level switch
+        {
+            "Green" => "SimplePrint Server - bereit",
+            "Yellow" => "SimplePrint Server - keine Druckerfreigabe",
+            _ => "SimplePrint Server - Problem"
+        };
     }
 
     private void ShowFromTray()
