@@ -11,6 +11,7 @@ public static class Protocol
     public const int DefaultGatewayPort = 45881;
     public const string DiscoveryRequestMagic = "SPRDISC1";
     public const string DiscoveryResponseMagic = "SPRANN1";
+    public const string ClientHeartbeatMagic = "SPRCLT1";
     public const int GatewayHeaderLength = 24;
 
     private static readonly byte[] GatewayMagic = Encoding.ASCII.GetBytes("SPR1");
@@ -24,13 +25,25 @@ public static class Protocol
     {
         try
         {
-            var a = JsonSerializer.Deserialize<DiscoveryAnnouncement>(bytes, JsonStore.Options);
-            return a?.Magic == DiscoveryResponseMagic && a.Version == Version ? a : null;
+            var item = JsonSerializer.Deserialize<DiscoveryAnnouncement>(bytes, JsonStore.Options);
+            return item?.Magic == DiscoveryResponseMagic && item.Version == Version ? item : null;
         }
         catch { return null; }
     }
 
-    // Header: 4 bytes magic, 4 bytes version, 16 bytes printer Guid.
+    public static byte[] SerializeClientHeartbeat(ClientHeartbeat heartbeat) =>
+        JsonSerializer.SerializeToUtf8Bytes(heartbeat, JsonStore.Options);
+
+    public static ClientHeartbeat? DeserializeClientHeartbeat(ReadOnlySpan<byte> bytes)
+    {
+        try
+        {
+            var item = JsonSerializer.Deserialize<ClientHeartbeat>(bytes, JsonStore.Options);
+            return item?.Magic == ClientHeartbeatMagic && item.Version == Version ? item : null;
+        }
+        catch { return null; }
+    }
+
     public static byte[] CreateGatewayHeader(Guid printerId)
     {
         var data = new byte[GatewayHeaderLength];
@@ -55,9 +68,9 @@ public static class Protocol
         var read = 0;
         while (read < buffer.Length)
         {
-            var n = await stream.ReadAsync(buffer[read..], ct);
-            if (n == 0) return false;
-            read += n;
+            var count = await stream.ReadAsync(buffer[read..], ct);
+            if (count == 0) return false;
+            read += count;
         }
         return true;
     }
