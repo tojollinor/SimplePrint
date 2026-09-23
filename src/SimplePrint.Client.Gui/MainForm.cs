@@ -8,6 +8,7 @@ public sealed class MainForm : Form
 {
     private readonly Label _agent = new() { AutoSize = true };
     private readonly Label _scan = new() { AutoSize = true };
+    private readonly Label _version = new() { AutoSize = true };
     private readonly Label _selectedServer = new() { AutoSize = true, Text = "Kein Server fest ausgewählt" };
     private readonly DataGridView _serversGrid = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
     private readonly DataGridView _available = new() { Dock = DockStyle.Fill, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
@@ -48,7 +49,8 @@ public sealed class MainForm : Form
         var status = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0) };
         status.Controls.AddRange([
             new Label { Text = "Client-Agent:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _agent,
-            new Label { Text = "   Suche:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _scan
+            new Label { Text = "   Suche:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _scan,
+            new Label { Text = "   Version:", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, _version
         ]);
         headerText.Controls.Add(status, 0, 1);
         top.Controls.Add(headerText, 1, 0);
@@ -133,6 +135,9 @@ public sealed class MainForm : Form
         _serversGrid.Columns.Add("server", "Server");
         _serversGrid.Columns.Add("ip", "IP-Adresse");
         _serversGrid.Columns.Add("gateway", "Gateway-Port");
+        _serversGrid.Columns.Add("version", "Version");
+        _serversGrid.Columns.Add("protocol", "Protokoll");
+        _serversGrid.Columns.Add("compat", "Kompatibilität");
         _serversGrid.Columns.Add("printers", "Drucker");
 
         _available.Columns.Add(new DataGridViewCheckBoxColumn { Name = "use", HeaderText = "Verwenden", Width = 75, FillWeight = 20 });
@@ -204,6 +209,7 @@ public sealed class MainForm : Form
         var tab = new TabPage("Installierte Drucker");
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         buttons.Controls.Add(MakeButton("Drucker entfernen", async (_, _) => await RemoveSelectedAsync()));
+        buttons.Controls.Add(MakeButton("Druckbereitschaft", async (_, _) => await ShowInstalledPrinterHealthAsync()));
         buttons.Controls.Add(MakeButton("Testseite", (_, _) => TestPage()));
         buttons.Controls.Add(MakeButton("Schnelldiagnose", async (_, _) => await QuickDiagnosisAsync()));
         tab.Controls.Add(_installed);
@@ -223,6 +229,8 @@ public sealed class MainForm : Form
         };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         buttons.Controls.Add(MakeButton("Aktualisieren", (_, _) => RefreshJobsGrid()));
+        buttons.Controls.Add(MakeButton("Abgeschlossene löschen", (_, _) => ClearCompletedJobs()));
+        buttons.Controls.Add(MakeButton("Alle löschen", (_, _) => ClearAllJobs()));
         tab.Controls.Add(_jobs);
         tab.Controls.Add(info);
         tab.Controls.Add(buttons);
@@ -273,12 +281,17 @@ public sealed class MainForm : Form
 
         var svc = await PowerShellRunner.RunAsync("(Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue).Status");
         _agent.Text = string.IsNullOrWhiteSpace(svc.StdOut) ? "nicht installiert" : svc.StdOut.Trim();
-        _tray.Text = $"SimplePrint Client - {_agent.Text}";
+
+        var assemblyVersion = typeof(MainForm).Assembly.GetName().Version;
+        _version.Text = assemblyVersion is null
+            ? $"unbekannt · P{Protocol.Version}"
+            : $"{assemblyVersion.Major}.{assemblyVersion.Minor}.{assemblyVersion.Build} · P{Protocol.Version}";
 
         await RefreshAvailablePrintersAsync();
         RefreshInstalledGrid();
         RefreshJobsGrid();
         RefreshStartupState();
+        UpdateTrayStatus();
     }
 
     private async Task RefreshAvailablePrintersAsync()
