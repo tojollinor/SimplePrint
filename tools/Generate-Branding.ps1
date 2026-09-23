@@ -14,6 +14,7 @@ function New-RoundedPath {
   param(
     [float]$X, [float]$Y, [float]$Width, [float]$Height, [float]$Radius
   )
+
   $path = New-Object System.Drawing.Drawing2D.GraphicsPath
   $diameter = $Radius * 2
   $path.AddArc($X, $Y, $diameter, $diameter, 180, 90)
@@ -30,10 +31,18 @@ function Fill-RoundedRect {
     [System.Drawing.Brush]$Brush,
     [float]$X, [float]$Y, [float]$Width, [float]$Height, [float]$Radius
   )
+
   $path = New-RoundedPath $X $Y $Width $Height $Radius
-  try { $Graphics.FillPath($Brush, $path) } finally { $path.Dispose() }
+  try {
+    $Graphics.FillPath($Brush, $path)
+  }
+  finally {
+    $path.Dispose()
+  }
 }
 
+# Das feste SimplePrint-Motiv: dunkles Blau + klar erkennbarer Drucker.
+# Keine türkis/grünen Statuspunkte, damit auch 16x16/24x24 eindeutig lesbar bleiben.
 $bitmap = New-Object System.Drawing.Bitmap 512, 512, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
@@ -41,72 +50,157 @@ $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::High
 $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
 $graphics.Clear([System.Drawing.Color]::Transparent)
 
-$navy  = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 22, 86, 145))
-$blue  = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 30, 144, 214))
-$light = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 232, 244, 252))
-$white = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
-$ink   = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 23, 44, 66))
-$green = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 112, 226, 158))
+$navy       = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 10, 43, 88))
+$printer    = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 43, 111, 190))
+$printerHi  = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 78, 148, 222))
+$paper      = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 250, 253, 255))
+$paperLine  = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 205, 226, 248))
+$slot       = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 18, 55, 99))
 
 try {
-  Fill-RoundedRect $graphics $navy 34 34 444 444 96
+  Fill-RoundedRect $graphics $navy 28 28 456 456 104
 
-  Fill-RoundedRect $graphics $white 150 92 212 153 18
-  $graphics.FillRectangle($light, 175, 126, 162, 19)
-  $graphics.FillRectangle($light, 175, 164, 140, 18)
+  # Oberes Papier
+  Fill-RoundedRect $graphics $paper 151 82 210 166 18
+  $graphics.FillRectangle($paperLine, 181, 120, 150, 18)
+  $graphics.FillRectangle($paperLine, 181, 158, 126, 18)
 
-  Fill-RoundedRect $graphics $blue 112 208 288 142 42
-  Fill-RoundedRect $graphics $ink 150 226 212 32 10
-  $graphics.FillEllipse($green, 337, 278, 18, 18)
+  # Druckergehäuse
+  Fill-RoundedRect $graphics $printer 100 202 312 174 46
+  Fill-RoundedRect $graphics $printerHi 116 220 280 48 20
+  Fill-RoundedRect $graphics $slot 151 250 210 28 10
 
-  Fill-RoundedRect $graphics $white 160 304 192 106 16
-  $graphics.FillRectangle($light, 184, 330, 144, 16)
-  $graphics.FillRectangle($light, 184, 362, 112, 16)
+  # Ausgabepapier
+  Fill-RoundedRect $graphics $paper 151 307 210 116 18
+  $graphics.FillRectangle($paperLine, 181, 338, 150, 17)
+  $graphics.FillRectangle($paperLine, 181, 374, 118, 17)
 
-  $graphics.FillRectangle($blue, 96, 276, 32, 30)
-  $graphics.FillRectangle($blue, 384, 276, 32, 30)
+  # Kleine seitliche Gehäusekonturen verstärken die Drucker-Silhouette bei kleinen Icons.
+  Fill-RoundedRect $graphics $printer 82 267 46 60 16
+  Fill-RoundedRect $graphics $printer 384 267 46 60 16
 
   $bitmap.Save($pngPath, [System.Drawing.Imaging.ImageFormat]::Png)
 }
 finally {
   $graphics.Dispose()
   $navy.Dispose()
-  $blue.Dispose()
-  $light.Dispose()
-  $white.Dispose()
-  $ink.Dispose()
-  $green.Dispose()
+  $printer.Dispose()
+  $printerHi.Dispose()
+  $paper.Dispose()
+  $paperLine.Dispose()
+  $slot.Dispose()
   $bitmap.Dispose()
 }
 
-# Generate a native Windows .ico instead of relying on a PNG-to-ICO converter.
-$source = [System.Drawing.Image]::FromFile($pngPath)
-$iconBitmap = New-Object System.Drawing.Bitmap 256, 256, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-$iconGraphics = [System.Drawing.Graphics]::FromImage($iconBitmap)
-$iconGraphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-$iconGraphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-$iconGraphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-$iconGraphics.DrawImage($source, 0, 0, 256, 256)
+# Echtes Multi-Resolution-ICO. Windows wählt je nach Oberfläche die passende native Größe
+# statt ein einzelnes 256px-Bild herunterzuskalieren.
+$icoWriter = @'
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.IO;
 
-$handle = $iconBitmap.GetHicon()
-$icon = [System.Drawing.Icon]::FromHandle($handle)
-$stream = [System.IO.File]::Open($icoPath, [System.IO.FileMode]::Create)
-try {
-  $icon.Save($stream)
-}
-finally {
-  $stream.Dispose()
-  $icon.Dispose()
-  $iconGraphics.Dispose()
-  $iconBitmap.Dispose()
-  $source.Dispose()
-}
+public static class SimplePrintIconWriter
+{
+    public static void Create(string pngPath, string icoPath)
+    {
+        int[] sizes = new int[] { 16, 20, 24, 32, 40, 48, 64, 128, 256 };
+        List<byte[]> images = new List<byte[]>();
 
-if (-not (Test-Path $pngPath) -or (Get-Item $pngPath).Length -lt 500) {
+        using (Bitmap source = new Bitmap(pngPath))
+        {
+            foreach (int size in sizes)
+            {
+                using (Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb))
+                {
+                    using (Graphics g = Graphics.FromImage(bmp))
+                    {
+                        g.Clear(Color.Transparent);
+                        g.SmoothingMode = SmoothingMode.AntiAlias;
+                        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                        g.DrawImage(source, 0, 0, size, size);
+                    }
+
+                    using (MemoryStream ms = new MemoryStream())
+                    using (BinaryWriter bw = new BinaryWriter(ms))
+                    {
+                        int maskStride = ((size + 31) / 32) * 4;
+
+                        // BITMAPINFOHEADER
+                        bw.Write(40);
+                        bw.Write(size);
+                        bw.Write(size * 2);
+                        bw.Write((short)1);
+                        bw.Write((short)32);
+                        bw.Write(0);
+                        bw.Write(size * size * 4);
+                        bw.Write(0);
+                        bw.Write(0);
+                        bw.Write(0);
+                        bw.Write(0);
+
+                        // BGRA, bottom-up
+                        for (int y = size - 1; y >= 0; y--)
+                        {
+                            for (int x = 0; x < size; x++)
+                            {
+                                Color c = bmp.GetPixel(x, y);
+                                bw.Write(c.B);
+                                bw.Write(c.G);
+                                bw.Write(c.R);
+                                bw.Write(c.A);
+                            }
+                        }
+
+                        // AND mask. Alpha channel übernimmt die Transparenz.
+                        bw.Write(new byte[maskStride * size]);
+                        bw.Flush();
+                        images.Add(ms.ToArray());
+                    }
+                }
+            }
+        }
+
+        using (FileStream fs = File.Create(icoPath))
+        using (BinaryWriter writer = new BinaryWriter(fs))
+        {
+            writer.Write((short)0);
+            writer.Write((short)1);
+            writer.Write((short)sizes.Length);
+
+            int offset = 6 + 16 * sizes.Length;
+            for (int i = 0; i < sizes.Length; i++)
+            {
+                int size = sizes[i];
+                writer.Write((byte)(size == 256 ? 0 : size));
+                writer.Write((byte)(size == 256 ? 0 : size));
+                writer.Write((byte)0);
+                writer.Write((byte)0);
+                writer.Write((short)1);
+                writer.Write((short)32);
+                writer.Write(images[i].Length);
+                writer.Write(offset);
+                offset += images[i].Length;
+            }
+
+            foreach (byte[] image in images)
+                writer.Write(image);
+        }
+    }
+}
+'@
+
+Add-Type -TypeDefinition $icoWriter -ReferencedAssemblies System.Drawing
+[SimplePrintIconWriter]::Create($pngPath, $icoPath)
+
+if (-not (Test-Path $pngPath) -or (Get-Item $pngPath).Length -lt 1000) {
   throw "logo.png konnte nicht korrekt erzeugt werden."
 }
-if (-not (Test-Path $icoPath) -or (Get-Item $icoPath).Length -lt 500) {
-  throw "app.ico konnte nicht korrekt erzeugt werden."
+if (-not (Test-Path $icoPath) -or (Get-Item $icoPath).Length -lt 5000) {
+  throw "app.ico konnte nicht korrekt als Multi-Resolution-Icon erzeugt werden."
 }
 
-Write-Host "Branding-Dateien wurden neu erzeugt." -ForegroundColor DarkGreen
+Write-Host "Branding-Dateien wurden neu erzeugt (dunkelblaues Druckerlogo + Multi-Resolution-ICO)." -ForegroundColor DarkGreen
