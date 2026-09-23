@@ -57,5 +57,5 @@ jobs:
             gh release create $tag "$($installer.FullName)" `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: bidirektionale Druckauftragsverfolgung mit gemeinsamer Job-ID, Server-Spoolerstatus, Client- und Server-Druckauftragstabellen, Schnelldiagnose, Offline-Clientverwaltung, Proxy-Bereitschaftsprüfung, SNMP-deaktivierte lokale Druckports und IPP-Class-Driver-Warnung."
+              --notes "SimplePrint ${version}: Hotfix für leere Windows-Portmonitor-Verbindungen, korrigierte Druckerporterstellung ohne ungültigen SNMP-Parameter, vereinfachter Status \"Auftrag an Drucker gesendet\", überarbeiteter Über-Dialog und reparierte Server-Diagnoseausgabe."
           }
