@@ -1,4 +1,4 @@
-# SimplePrint 0.1.6
+# SimplePrint 0.1.7
 
 Kleiner Windows-Druckserver für genau einen Zweck: **Drucken ohne Rendering-Veränderung**, plus Diagnose.
 
@@ -34,7 +34,7 @@ USB-/lokaler Drucker
 
 ## Installation aus fertigem Setup
 
-1. Auf dem Druckserver `SimplePrint-Setup-0.1.6.exe` starten und **PrintServer** auswählen.
+1. Auf dem Druckserver `SimplePrint-Setup-0.1.7.exe` starten und **PrintServer** auswählen.
 2. `SimplePrint Server` öffnen und den lokal installierten Drucker über **Drucker hinzufügen** freigeben.
 3. Auf einem Windows-10/11-Client dasselbe Setup starten und **PrintClient** auswählen.
 4. `SimplePrint Client` öffnen. Der Server sollte automatisch erscheinen.
@@ -59,7 +59,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 Die veröffentlichten Programme landen in `dist\`. Wenn Inno Setup vorhanden ist, entsteht zusätzlich:
 
 ```text
-dist\Installer\SimplePrint-Setup-0.1.6.exe
+dist\Installer\SimplePrint-Setup-0.1.7.exe
 ```
 
 ## Diagnose
@@ -84,7 +84,7 @@ Beim Brother DCP-L2510D sollte auf dem **Client der native Brother-Treiber** aus
 
 ## Stand
 
-Die aktuelle Fassung ist `0.1.6`. Sie ergänzt bidirektionale Druckauftragsverfolgung zwischen Client und Server, Server-Spoolerstatus, Schnelldiagnosen, Offline-Clientverwaltung sowie robustere lokale RAW-Proxy-Ports. Jeder Auftrag erhält eine gemeinsame Job-ID, die auf Client und Server angezeigt wird. Besonders GDI-Treiber können herstellerspezifisches Verhalten haben. Die Diagnosefunktionen sind genau dafür eingebaut.
+Die aktuelle Fassung ist `0.1.7`. Der Hotfix verwirft leere Windows-Portmonitor-Prüfverbindungen vor der Job-Erzeugung und zusätzlich serverseitig vor dem Spooler, korrigiert die Druckerporterstellung, vereinfacht den Abschlussstatus zu `Auftrag an Drucker gesendet`, verbessert den Über-Dialog und repariert die Server-Diagnoseausgabe. Besonders GDI-Treiber können herstellerspezifisches Verhalten haben. Die Diagnosefunktionen sind genau dafür eingebaut.
 
 ## Logo und Branding
 
