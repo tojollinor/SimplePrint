@@ -87,9 +87,9 @@ $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 if($p) {{
   'Queue: ' + $p.Name
   'Treiber: ' + $p.DriverName
-  if($p.DriverName -like '*IPP Class Driver*') {
+  if($p.DriverName -like '*IPP Class Driver*') {{
     'WARNUNG: Microsoft IPP Class Driver erkannt. Für SimplePrint RAW wird ein Hersteller-PCL6/PS-Treiber empfohlen.'
-  }
+  }}
   'Port: ' + $p.PortName
   'Status: ' + $p.PrinterStatus
   if($p.PortName -eq $port) {{ 'Queue-Zuordnung: OK' }} else {{ 'Queue-Zuordnung: FEHLER' }}
