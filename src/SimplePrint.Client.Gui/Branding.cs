@@ -5,34 +5,51 @@ namespace SimplePrint.Client.Gui;
 internal static class Branding
 {
     private const string EmbeddedLogoResource = "SimplePrint.DefaultLogo.png";
+    private const string FixedIconName = "app-0.1.5.ico";
 
     public static void ApplyApplicationIcon(Form form)
     {
         try
         {
-            using var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            using var icon = LoadFixedIcon();
             if (icon is not null) form.Icon = (Icon)icon.Clone();
         }
-        catch
-        {
-            // Das feste EXE-Icon bleibt auch dann in Taskleiste/Explorer erhalten.
-        }
+        catch { }
     }
 
-    public static PictureBox CreateGuiLogoBox()
+    public static Icon? LoadFixedIcon()
     {
-        return new PictureBox
+        var path = FindAsset(FixedIconName) ?? FindAsset("app.ico");
+        if (path is not null)
         {
-            Dock = DockStyle.Fill,
-            Margin = new Padding(0),
-            SizeMode = PictureBoxSizeMode.Zoom,
-            Image = LoadGuiLogo()
-        };
+            try
+            {
+                using var icon = new Icon(path);
+                return (Icon)icon.Clone();
+            }
+            catch { }
+        }
+
+        try
+        {
+            using var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            return icon is null ? null : (Icon)icon.Clone();
+        }
+        catch { return null; }
     }
+
+    public static PictureBox CreateGuiLogoBox() => new()
+    {
+        Dock = DockStyle.Fill,
+        Margin = new Padding(0),
+        Padding = new Padding(4),
+        SizeMode = PictureBoxSizeMode.Zoom,
+        Image = LoadGuiLogo()
+    };
 
     public static Image? LoadGuiLogo()
     {
-        var customPath = FindCustomLogoPath();
+        var customPath = FindAsset("logo.png");
         if (customPath is not null)
         {
             try { return LoadImageUnlocked(customPath); }
@@ -53,7 +70,7 @@ internal static class Branding
     {
         try
         {
-            using var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            using var icon = LoadFixedIcon();
             return icon?.ToBitmap();
         }
         catch { return null; }
@@ -67,12 +84,12 @@ internal static class Branding
         return new Bitmap(image);
     }
 
-    private static string? FindCustomLogoPath()
+    private static string? FindAsset(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         for (var i = 0; i < 7 && dir is not null; i++, dir = dir.Parent)
         {
-            var candidate = Path.Combine(dir.FullName, "assets", "logo.png");
+            var candidate = Path.Combine(dir.FullName, "assets", file);
             if (File.Exists(candidate)) return candidate;
         }
         return null;
