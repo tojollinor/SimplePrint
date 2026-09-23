@@ -12,7 +12,7 @@ public sealed class MainForm : Form
     private readonly DataGridView _serversGrid = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
     private readonly DataGridView _available = new() { Dock = DockStyle.Fill, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
     private readonly DataGridView _installed = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
-    private readonly CheckBox _startup = new() { Text = "SimplePrint Client bei jeder Windows-Anmeldung im Infobereich starten", AutoSize = true };
+    private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };\n    private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
     private readonly NotifyIcon _tray;
 
     private ClientConfig _config = new();
@@ -53,6 +53,11 @@ public sealed class MainForm : Form
         tabs.TabPages.Add(CreateAvailableTab());
         tabs.TabPages.Add(CreateInstalledTab());
         tabs.TabPages.Add(CreateSettingsTab());
+        tabs.Selected += async (_, e) =>
+        {
+            if (e.TabPage?.Text == "Verfügbare Drucker")
+                await RefreshAvailablePrintersAsync();
+        };
 
         var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         bottom.Controls.Add(MakeButton("Server suchen", async (_, _) => await RefreshAllAsync()));
@@ -149,7 +154,7 @@ public sealed class MainForm : Form
             Text = "Hier werden ausschließlich die Drucker des fest ausgewählten Servers angezeigt."
         };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
-        buttons.Controls.Add(MakeButton("Druckerauswahl speichern", async (_, _) => await SavePrinterSelectionAsync()));
+        buttons.Controls.Add(MakeButton("Aktualisieren", async (_, _) => await RefreshAvailablePrintersAsync()));\n        buttons.Controls.Add(MakeButton("Druckerauswahl speichern", async (_, _) => await SavePrinterSelectionAsync()));
         tab.Controls.Add(_available);
         tab.Controls.Add(info);
         tab.Controls.Add(buttons);
@@ -170,16 +175,30 @@ public sealed class MainForm : Form
     private TabPage CreateSettingsTab()
     {
         var tab = new TabPage("Allgemein");
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(18) };
+        var panel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Padding = new Padding(18)
+        };
+
         panel.Controls.Add(new Label
         {
             AutoSize = true,
             MaximumSize = new Size(840, 0),
-            Text = "Der Client-Agent läuft als automatischer Windows-Dienst. Die Oberfläche benötigt im Normalbetrieb keine Administratorrechte. UAC erscheint nur bei systemweiten Änderungen wie Druckerinstallation oder Autostart."
+            Text = "Der Client-Agent läuft unabhängig von der Oberfläche als automatischer Windows-Dienst. Der GUI-Autostart kann hier separat aktiviert oder deaktiviert werden."
         });
-        panel.Controls.Add(new Label { Height = 8, AutoSize = false });
+        panel.Controls.Add(new Label { Height = 10, AutoSize = false });
+        panel.Controls.Add(_startupStatus);
+        panel.Controls.Add(new Label { Height = 6, AutoSize = false });
         panel.Controls.Add(_startup);
-        panel.Controls.Add(MakeButton("Autostart übernehmen", async (_, _) => await SaveStartupAsync()));
+
+        var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 12, 0, 0) };
+        buttons.Controls.Add(MakeButton("Autostart aktivieren", async (_, _) => await SetStartupAsync(true)));
+        buttons.Controls.Add(MakeButton("Autostart deaktivieren", async (_, _) => await SetStartupAsync(false)));
+        panel.Controls.Add(buttons);
+
         tab.Controls.Add(panel);
         return tab;
     }
@@ -199,6 +218,15 @@ public sealed class MainForm : Form
         _agent.Text = string.IsNullOrWhiteSpace(svc.StdOut) ? "nicht installiert" : svc.StdOut.Trim();
         _tray.Text = $"SimplePrint Client - {_agent.Text}";
 
+        await RefreshAvailablePrintersAsync();
+        RefreshInstalledGrid();
+        RefreshStartupState();
+    }
+
+    private async Task RefreshAvailablePrintersAsync()
+    {
+        _config = JsonStore.LoadOrCreate(AppPaths.ClientConfig, () => new ClientConfig());
+
         _scan.Text = "suche ...";
         try
         {
@@ -208,12 +236,19 @@ public sealed class MainForm : Form
         {
             _servers = [];
         }
-        _scan.Text = _servers.Count == 0 ? "kein Server gefunden" : $"{_servers.Count} Server gefunden";
 
+        _scan.Text = _servers.Count == 0 ? "kein Server gefunden" : $"{_servers.Count} Server gefunden";
         RefreshServerGrid();
         RefreshAvailableGrid();
-        RefreshInstalledGrid();
-        _startup.Checked = StartupManager.IsSystemWideEnabled("SimplePrintClientGui");
+    }
+
+    private void RefreshStartupState()
+    {
+        var enabled = StartupManager.IsSystemWideEnabled("SimplePrintClientGui");
+        _startupStatus.Text = enabled ? "Status: Autostart aktiviert" : "Status: Autostart deaktiviert";
+        _startup.Checked = enabled
+            ? StartupManager.IsTrayModeEnabled("SimplePrintClientGui", true)
+            : true;
     }
 
     private void RefreshServerGrid()
@@ -509,13 +544,24 @@ public sealed class MainForm : Form
         PrinterInstaller.PrintTestPage(_config.Mappings.First(m => m.PortName == portName).LocalPrinterName);
     }
 
-    private async Task SaveStartupAsync()
+    private async Task SetStartupAsync(bool enabled)
     {
         try
         {
-            await StartupManager.SetSystemWideAsync("SimplePrintClientGui", Application.ExecutablePath, _startup.Checked);
-            _startup.Checked = StartupManager.IsSystemWideEnabled("SimplePrintClientGui");
-            MessageBox.Show(_startup.Checked ? "Systemweiter GUI-Autostart ist aktiviert." : "Systemweiter GUI-Autostart ist deaktiviert.");
+            await StartupManager.SetSystemWideAsync(
+                "SimplePrintClientGui",
+                Application.ExecutablePath,
+                enabled,
+                _startup.Checked);
+
+            RefreshStartupState();
+            MessageBox.Show(
+                enabled ? "Systemweiter GUI-Autostart wurde aktiviert." : "Systemweiter GUI-Autostart wurde deaktiviert.",
+                "Autostart");
+        }
+        catch (OperationCanceledException ex)
+        {
+            MessageBox.Show(ex.Message, "Autostart", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
