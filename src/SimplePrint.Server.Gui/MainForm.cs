@@ -259,6 +259,7 @@ public sealed class MainForm : Form
     {
         try
         {
+            SetBusy("Drucker werden eingelesen …");
             _localPrinters = await WinPrinterHelper.GetPrintersAsync();
             _printers.BeginUpdate();
             _printers.Items.Clear();
@@ -269,6 +270,7 @@ public sealed class MainForm : Form
                 var enabled = _config.Printers.Any(x => x.QueueName.Equals(p.Name, StringComparison.OrdinalIgnoreCase) && x.Enabled);
                 _printers.SetItemChecked(index, enabled);
             }
+            SetStatus($"✓ {_localPrinters.Count} Drucker eingelesen.");
         }
         catch (Exception ex)
         {
@@ -329,6 +331,7 @@ public sealed class MainForm : Form
             return;
         }
         WinPrinterHelper.PrintTestPage(choice.Info.Name);
+        SetStatus($"✓ Testseite für '{choice.Info.Name}' wurde gestartet.");
     }
 
     private void RefreshClients()
@@ -369,6 +372,7 @@ public sealed class MainForm : Form
         _firewall.Rows.Clear();
         _firewall.Rows.Add("SimplePrint Discovery", "Eingehend", "UDP 45880", "Privat/Domäne · LocalSubnet", state.Discovery ? "aktiv" : "fehlt / inaktiv");
         _firewall.Rows.Add("SimplePrint Print Gateway", "Eingehend", "TCP 45881", "Privat/Domäne · LocalSubnet", state.Gateway ? "aktiv" : "fehlt / inaktiv");
+        SetStatus("✓ Firewall-Status aktualisiert.");
     }
 
     private async Task ApplyFirewallAsync()
@@ -417,6 +421,7 @@ public sealed class MainForm : Form
     {
         try
         {
+            SetBusy(enabled ? "Autostart wird aktiviert …" : "Autostart wird deaktiviert …");
             await StartupManager.SetSystemWideAsync(
                 "SimplePrintServerGui",
                 Application.ExecutablePath,
@@ -424,6 +429,7 @@ public sealed class MainForm : Form
                 _startup.Checked);
 
             RefreshStartupState();
+            SetStatus(enabled ? "✓ Autostart aktiviert." : "✓ Autostart deaktiviert.");
             MessageBox.Show(
                 enabled ? "Systemweiter GUI-Autostart wurde aktiviert." : "Systemweiter GUI-Autostart wurde deaktiviert.",
                 "Autostart");
@@ -444,12 +450,14 @@ public sealed class MainForm : Form
         if (save.ShowDialog(this) != DialogResult.OK) return;
         try
         {
+            SetBusy("Diagnosepaket wird erstellt …");
             using var zip = ZipFile.Open(save.FileName, ZipArchiveMode.Create);
             AddFile(zip, AppPaths.ServerConfig, "config.json");
             AddFile(zip, AppPaths.ServerLog, "server.log");
             var e = zip.CreateEntry("diagnostics.txt");
             using var w = new StreamWriter(e.Open());
             await w.WriteAsync(await WinPrinterHelper.GetDiagnosticsAsync());
+            SetStatus("✓ Diagnosepaket wurde erstellt.");
             MessageBox.Show("Diagnosepaket wurde erstellt.");
         }
         catch (Exception ex)
