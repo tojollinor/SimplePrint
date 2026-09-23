@@ -60,6 +60,7 @@ public sealed class ServerWorker : BackgroundService
 
     private async Task SaveClientsAsync()
     {
+        ApplyOfflineClientDeletions();
         await _clientSaveLock.WaitAsync();
         try
         {
