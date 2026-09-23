@@ -490,8 +490,8 @@ public sealed class ServerWorker : BackgroundService
                     {
                         gone.Status = "Abgeschlossen";
                         gone.Message = seenInQueue
-                            ? "Auftrag ist nicht mehr in der Windows-Warteschlange. Ein physischer Ausdruck wurde vom Drucker nicht separat bestätigt."
-                            : "Auftrag wurde vom Windows-Spooler sehr schnell abgeschlossen.";
+                            ? "Auftrag an Drucker gesendet"
+                            : "Auftrag an Drucker gesendet";
                         gone.UpdatedAt = DateTimeOffset.Now;
                         await SaveJobsAsync();
                     }
