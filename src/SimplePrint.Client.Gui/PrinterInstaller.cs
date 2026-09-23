@@ -25,7 +25,7 @@ if($existing -and $existing.PortName -ne $port) {{
 }}
 
 if(-not (Get-PrinterPort -Name $port -ErrorAction SilentlyContinue)) {{
-  Add-PrinterPort -Name $port -PrinterHostAddress '127.0.0.1' -PortNumber {mapping.LocalProxyPort} -SNMP 0
+  Add-PrinterPort -Name $port -PrinterHostAddress '127.0.0.1' -PortNumber {mapping.LocalProxyPort}
 }}
 
 if($existing) {{
