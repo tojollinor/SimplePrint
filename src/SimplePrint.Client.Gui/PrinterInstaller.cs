@@ -62,7 +62,17 @@ if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison
     Add-Printer -Name $printer -DeviceURL $address -Comment $tag -ErrorAction Stop
   }}
   elseif(-not [string]::IsNullOrWhiteSpace($deviceUuid)) {{
-    Add-Printer -Name $printer -DeviceUUID $deviceUuid -Comment $tag -ErrorAction Stop
+    $uuidText = $deviceUuid.Trim()
+    if($uuidText.StartsWith('urn:uuid:', [System.StringComparison]::OrdinalIgnoreCase)) {{
+      $uuidText = $uuidText.Substring(9)
+    }}
+
+    $uuidGuid = [Guid]::Empty
+    if(-not [Guid]::TryParse($uuidText, [ref]$uuidGuid)) {{
+      throw ('Die vom Server gelieferte WSD-DeviceUUID ist ungültig: ' + $deviceUuid)
+    }}
+
+    Add-Printer -Name $printer -DeviceUUID $uuidGuid -Comment $tag -ErrorAction Stop
   }}
   else {{
     throw 'Für den direkten WSD-Druck wurden weder DeviceURL noch DeviceUUID übermittelt.'
