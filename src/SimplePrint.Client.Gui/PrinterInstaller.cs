@@ -44,11 +44,8 @@ Add-PrinterDriver -Name $driver -ErrorAction Stop
             var directScript = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $address={PowerShellRunner.Quote(mapping.DirectAddress)}
+$deviceUuid={PowerShellRunner.Quote(mapping.DeviceUuid)}
 $tag={PowerShellRunner.Quote($"SimplePrint:{mapping.ServerId:N}:{mapping.PrinterId:N}")}
-
-if([string]::IsNullOrWhiteSpace($address)) {{
-  throw 'Für den Direktdruck wurde keine Geräteadresse übermittelt.'
-}}
 
 $existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 if($existing) {{
@@ -56,9 +53,20 @@ if($existing) {{
 }}
 
 if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison.OrdinalIgnoreCase) ? "$true" : "$false")}) {{
+  if([string]::IsNullOrWhiteSpace($address)) {{
+    throw 'Für den direkten IPP-Druck wurde keine Geräteadresse übermittelt.'
+  }}
   Add-Printer -Name $printer -IppURL $address -Comment $tag -ErrorAction Stop
 }} else {{
-  Add-Printer -Name $printer -DeviceURL $address -Comment $tag -ErrorAction Stop
+  if(-not [string]::IsNullOrWhiteSpace($address)) {{
+    Add-Printer -Name $printer -DeviceURL $address -Comment $tag -ErrorAction Stop
+  }}
+  elseif(-not [string]::IsNullOrWhiteSpace($deviceUuid)) {{
+    Add-Printer -Name $printer -DeviceUUID $deviceUuid -Comment $tag -ErrorAction Stop
+  }}
+  else {{
+    throw 'Für den direkten WSD-Druck wurden weder DeviceURL noch DeviceUUID übermittelt.'
+  }}
 }}
 
 if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{
@@ -155,7 +163,7 @@ if(-not $p) {{ $problems += 'Direkte Windows-Druckerqueue fehlt.' }}
 [pscustomobject]@{{
   Ready = ($problems.Count -eq 0)
   Detail = 'Modus={mapping.TransportMode}; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
-           '; Ziel={mapping.DirectAddress}'
+           '; Ziel=' + $(if(-not [string]::IsNullOrWhiteSpace('{mapping.DirectAddress}')){{'{mapping.DirectAddress}'}}else{{'UUID {mapping.DeviceUuid}'}})
   Problems = @($problems)
   Warnings = @($problems)
 }} | ConvertTo-Json -Compress
