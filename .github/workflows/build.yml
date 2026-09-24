@@ -3,7 +3,7 @@ name: Build SimplePrint
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, dev/0.2.4 ]
 
 permissions:
   contents: write
