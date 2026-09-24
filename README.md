@@ -1,4 +1,4 @@
-# SimplePrint 0.2.1
+# SimplePrint 0.2.2
 
 Kleiner Windows-Druckserver mit zwei Druckpfaden: **RAW-Tunnel für klassische/lokale Treiber** und **direkte IPP-/WSD-Anbindung für Microsoft IPP Class Driver**, plus Diagnose.
 
@@ -34,14 +34,22 @@ USB-/lokaler Drucker
 
 ## Installation aus fertigem Setup
 
-1. Auf dem Druckserver `SimplePrint-Setup-0.2.1.exe` starten und **PrintServer** auswählen.
-2. `SimplePrint Server` öffnen und den lokal installierten Drucker über **Drucker hinzufügen** freigeben.
-3. Auf einem Windows-10/11-Client dasselbe Setup starten und **PrintClient** auswählen.
+1. Auf dem Druckserver `SimplePrint-Server-Setup-0.2.2.exe` installieren.
+2. `SimplePrint Server` öffnen und die gewünschten lokalen Drucker freigeben.
+3. Auf jedem Windows-10/11-Client `SimplePrint-Client-Setup-0.2.2.exe` installieren.
 4. `SimplePrint Client` öffnen. Der Server sollte automatisch erscheinen.
-5. Drucker markieren → **Drucker installieren**.
+5. Drucker über die Checkbox auswählen und die Druckerauswahl speichern.
 6. Bei Class-Driver-Tunnelqueues installiert/verwendet SimplePrint ausschließlich den **exakt gleichen Treiber wie auf dem Server**. Ein beliebiger Ersatztreiber wird nicht mehr akzeptiert.
 7. Microsoft-IPP/WSD-Freigaben werden, sofern die Geräteadresse ermittelbar ist, als **direkte IPP-/WSD-Queue** installiert.
 8. Mit **Testseite** den vollständigen Weg prüfen.
+
+## Automatische Updates ab 0.2.2
+
+Server- und Client-GUI prüfen beim Start sowie anschließend alle sechs Stunden den neuesten öffentlichen GitHub-Release unter `tojollinor/SimplePrint`. Ist eine neuere Version verfügbar, erscheint ein eigener SimplePrint-Dialog mit Release-Hinweisen.
+
+Über **Jetzt aktualisieren** lädt der Server ausschließlich `SimplePrint-Server-Setup-<Version>.exe` und der Client ausschließlich `SimplePrint-Client-Setup-<Version>.exe` aus dem GitHub-Release. Der Installer wird in ein temporäres Update-Verzeichnis geladen und anschließend gestartet. Dateigröße und, sofern GitHub für das Asset einen SHA-256-Digest bereitstellt, auch die Prüfsumme werden vor dem Start kontrolliert. Alternativ lässt sich der Release im Browser öffnen oder die Aktualisierung auf später verschieben.
+
+Unter **Allgemein → Nach Updates suchen** kann die Prüfung auf Server und Client jederzeit manuell ausgelöst werden. Solange das Repository privat ist, kann die öffentliche Release-API ohne Authentifizierung nicht verwendet werden; für die automatische Updatefunktion muss das Repository öffentlich erreichbar sein.
 
 ## Build
 
@@ -60,7 +68,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 Die veröffentlichten Programme landen in `dist\`. Wenn Inno Setup vorhanden ist, entsteht zusätzlich:
 
 ```text
-dist\Installer\SimplePrint-Setup-0.2.1.exe
+dist\Installer\SimplePrint-Server-Setup-0.2.2.exe
+dist\Installer\SimplePrint-Client-Setup-0.2.2.exe
 ```
 
 ## Diagnose
@@ -85,9 +94,9 @@ Beim Brother DCP-L2510D muss der Client bei einer Class-Driver-Freigabe **densel
 
 ## Stand
 
-Die aktuelle Fassung ist `0.2.1`. Sie ergänzt direkten IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung und einen harten Schutz gegen rekursive SimplePrint-Druckschleifen. Enthalten ist außerdem die End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
+Die aktuelle Entwicklungsfassung ist `0.2.2`. Sie ergänzt direkten IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung und einen harten Schutz gegen rekursive SimplePrint-Druckschleifen. Enthalten ist außerdem die End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
 
-Zusätzlich enthalten sind Versions-/Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Druckauftrags-Historienverwaltung, erweiterte Diagnosepakete, generische Class-Driver-Warnungen und Ampelstatus im Tray.
+Zusätzlich enthalten sind Versions-/Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Druckauftrags-Historienverwaltung, erweiterte Diagnosepakete, generische Class-Driver-Warnungen und Ampelstatus im Tray. Ab 0.2.2 ändert ein Klick auf eine Druckerzeile die Auswahl nicht mehr; der Haken wird auf Server und Client ausschließlich über die Checkbox selbst gesetzt oder entfernt. Herausgeber-Metadaten verweisen auf `tojollinor` bzw. das GitHub-Repository.
 
 ## Logo und Branding
 

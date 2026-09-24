@@ -43,19 +43,22 @@ jobs:
           $version = [string]$props.Project.PropertyGroup.Version
           if ([string]::IsNullOrWhiteSpace($version)) { throw "Version konnte nicht ermittelt werden." }
           $tag = "v$version"
-          $installer = Get-ChildItem "dist\Installer\*.exe" | Select-Object -First 1
-          if (-not $installer) { throw "Installer wurde nicht gefunden." }
+          $installers = @(Get-ChildItem "dist\Installer\SimplePrint-*-Setup-$version.exe" | Sort-Object Name)
+          if ($installers.Count -ne 2) { throw "Server- und Client-Installer wurden nicht vollständig gefunden." }
 
           $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
           $exists = $null -ne ($releases | Where-Object { $_.tagName -eq $tag } | Select-Object -First 1)
 
-          if ($exists) {
-            gh release delete-asset $tag $installer.Name -y 2>$null
-            gh release upload $tag "$($installer.FullName)"
-          }
-          else {
-            gh release create $tag "$($installer.FullName)" `
+          if (-not $exists) {
+            gh release create $tag `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: direkter IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung im Tunnel, Schutz gegen rekursive SimplePrint-Druckschleifen sowie End-to-End-Druckbereitschaft mit Geräte- und Spoolerstatus."
+              --notes "SimplePrint ${version}: getrennte Server-/Client-Installer, automatische GitHub-Release-Updates, verbesserte Druckerauswahl sowie die bisherigen IPP-/WSD-, Class-Driver-, Loop-Schutz- und Diagnosefunktionen."
+          }
+
+          foreach ($installer in $installers) {
+            if ($exists) {
+              gh release delete-asset $tag $installer.Name -y 2>$null
+            }
+            gh release upload $tag "$($installer.FullName)"
           }

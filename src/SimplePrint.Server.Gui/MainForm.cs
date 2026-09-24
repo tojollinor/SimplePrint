@@ -20,12 +20,15 @@ public sealed class MainForm : Form
     private readonly DataGridView _clients = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
     private readonly DataGridView _jobs = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 2000 };
+    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 6 * 60 * 60 * 1000 };
     private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };
     private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
     private readonly NotifyIcon _tray;
     private readonly ToolStripStatusLabel _operationStatus = new() { Text = "Bereit" };
     private readonly ToolStripProgressBar _operationProgress = new() { Style = ProgressBarStyle.Marquee, Visible = false, Width = 100 };
     private bool _publicNetworkWarningShown;
+    private bool _updateCheckRunning;
+    private string? _lastOfferedUpdate;
     private ServerConfig _config = new();
     private List<LocalPrinterInfo> _localPrinters = [];
     private bool _allowExit;
@@ -38,6 +41,7 @@ public sealed class MainForm : Form
         MinimumSize = new Size(560, 440);
         StartPosition = FormStartPosition.CenterScreen;
         Branding.ApplyApplicationIcon(this);
+        _printers.ItemCheck += Printers_ItemCheck;
 
         var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 132, Padding = new Padding(10), ColumnCount = 2, RowCount = 1 };
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
@@ -110,11 +114,15 @@ public sealed class MainForm : Form
             RefreshJobsGrid();
         };
         _refreshTimer.Start();
+        _updateTimer.Tick += async (_, _) => await CheckForUpdatesAsync(false);
+        _updateTimer.Start();
 
         FormClosed += (_, _) =>
         {
             _refreshTimer.Stop();
             _refreshTimer.Dispose();
+            _updateTimer.Stop();
+            _updateTimer.Dispose();
             _tray.Dispose();
         };
 
@@ -122,7 +130,35 @@ public sealed class MainForm : Form
         {
             await RefreshAllAsync();
             if (Program.StartInTray) HideToTray();
+            _ = CheckForUpdatesAsync(false);
         };
+    }
+
+    private void Printers_ItemCheck(object? sender, ItemCheckEventArgs e)
+    {
+        // A row click only selects the printer. The check state changes exclusively
+        // when the user actually clicks the checkbox glyph itself.
+        if (Control.MouseButtons != MouseButtons.Left)
+            return;
+
+        var click = _printers.PointToClient(Cursor.Position);
+        if (_printers.IndexFromPoint(click) != e.Index)
+            return;
+
+        var itemBounds = _printers.GetItemRectangle(e.Index);
+        using var graphics = _printers.CreateGraphics();
+        var glyphSize = CheckBoxRenderer.GetGlyphSize(
+            graphics,
+            System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal);
+
+        var glyphBounds = new Rectangle(
+            itemBounds.Left + 1,
+            itemBounds.Top + Math.Max(0, (itemBounds.Height - glyphSize.Height) / 2),
+            glyphSize.Width,
+            glyphSize.Height);
+
+        if (!glyphBounds.Contains(click))
+            e.NewValue = e.CurrentValue;
     }
 
     private TabPage CreatePrinterTab()
@@ -260,10 +296,62 @@ public sealed class MainForm : Form
         buttons.Controls.Add(MakeButton("Autostart aktivieren", async (_, _) => await SetStartupAsync(true)));
         buttons.Controls.Add(MakeButton("Autostart deaktivieren", async (_, _) => await SetStartupAsync(false)));
         buttons.Controls.Add(MakeButton("Serverdienst neu starten", async (_, _) => await RestartServerServiceAsync()));
+        buttons.Controls.Add(MakeButton("Nach Updates suchen", async (_, _) => await CheckForUpdatesAsync(true)));
         panel.Controls.Add(buttons);
 
         tab.Controls.Add(panel);
         return tab;
+    }
+
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (_updateCheckRunning)
+        {
+            if (manual)
+                SetStatus("Updateprüfung läuft bereits …");
+            return;
+        }
+
+        _updateCheckRunning = true;
+        try
+        {
+            if (manual)
+                SetBusy("GitHub Releases werden geprüft …");
+
+            var current = typeof(MainForm).Assembly.GetName().Version ?? new Version(0, 0, 0, 0);
+            var update = await GitHubUpdateService.CheckAsync(current, SimplePrintComponent.Server);
+
+            if (update is null)
+            {
+                if (manual)
+                    SetStatus("✓ SimplePrint ist aktuell.");
+                return;
+            }
+
+            if (!manual &&
+                string.Equals(_lastOfferedUpdate, update.TagName, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _lastOfferedUpdate = update.TagName;
+            SetStatus($"Update verfügbar: {update.TagName}");
+
+            using var dialog = new UpdateForm(update);
+            dialog.ShowDialog(Visible ? this : null);
+
+            if (dialog.InstallerStarted)
+                ExitApplication();
+        }
+        catch (Exception ex)
+        {
+            if (manual)
+                SetStatus($"Updateprüfung fehlgeschlagen: {ex.Message}");
+        }
+        finally
+        {
+            _updateCheckRunning = false;
+            if (manual && _operationProgress.Visible)
+                SetIdle();
+        }
     }
 
     private static Button MakeButton(string text, EventHandler click)

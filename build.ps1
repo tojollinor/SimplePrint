@@ -54,6 +54,23 @@ if (-not $compiler) {
 }
 
 New-Item (Join-Path $Dist "Installer") -ItemType Directory -Force | Out-Null
-& $compiler (Join-Path $Root "installer\SimplePrint.iss")
-if ($LASTEXITCODE -ne 0) { throw "Inno Setup Build fehlgeschlagen." }
-Write-Host "Fertig. Installer liegt unter dist\Installer." -ForegroundColor Green
+
+$installerScripts = @(
+  @{ Name="Server"; Script="installer\SimplePrint.Server.iss" },
+  @{ Name="Client"; Script="installer\SimplePrint.Client.iss" }
+)
+
+foreach ($installer in $installerScripts) {
+  Write-Host "Building $($installer.Name) installer..." -ForegroundColor Yellow
+  & $compiler (Join-Path $Root $installer.Script)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Inno Setup Build für $($installer.Name) ist fehlgeschlagen."
+  }
+}
+
+$builtInstallers = @(Get-ChildItem (Join-Path $Dist "Installer") -Filter "SimplePrint-*-Setup-*.exe")
+if ($builtInstallers.Count -ne 2) {
+  throw "Es wurden nicht genau zwei SimplePrint-Installer erzeugt."
+}
+
+Write-Host "Fertig. Server- und Client-Installer liegen getrennt unter dist\Installer." -ForegroundColor Green

@@ -14,7 +14,11 @@ function Ensure-Service([string]$Name, [string]$DisplayName, [string]$BinaryPath
       Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue
       $existing.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(8))
     }
-    Set-Service -Name $Name -StartupType Automatic
+
+    & sc.exe config $Name binPath= ('"' + $BinaryPath + '"') start= auto | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "Dienstpfad für $Name konnte nicht aktualisiert werden."
+    }
   }
   Start-Service -Name $Name
 }
@@ -63,4 +67,29 @@ if ($Mode -eq 'Server') {
 if ($Mode -eq 'Client') {
   $exe = Join-Path $AppPath 'Client\Service\SimplePrint.Client.Service.exe'
   Ensure-Service 'SimplePrintClient' 'SimplePrint Client Agent' $exe 'Findet SimplePrint-Server automatisch und tunnelt lokale RAW-Druckjobs ohne Rendering.'
+}
+
+# Migration von 0.2.1 und älter: Bis 0.2.1 gab es einen gemeinsamen Installer.
+# Die neue Server-/Client-Installation übernimmt die jeweiligen Dateien und Dienste.
+# Der alte gemeinsame Deinstallationseintrag wird entfernt, sobald kein noch nicht
+# migrierter Gegenpart mehr davon abhängig ist.
+$legacyUninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{71D8D5B8-5D4A-4898-9454-B5F6D95B9AE1}_is1'
+$newServerUninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A7F92C46-6234-4B78-A0AB-8F83E317C221}_is1'
+$newClientUninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{5D49BD99-7D65-44D6-BEC5-BCE455F79F52}_is1'
+
+if (Test-Path $legacyUninstallKey) {
+  $serverServiceExists = $null -ne (Get-Service -Name 'SimplePrintServer' -ErrorAction SilentlyContinue)
+  $clientServiceExists = $null -ne (Get-Service -Name 'SimplePrintClient' -ErrorAction SilentlyContinue)
+  $newServerInstalled = Test-Path $newServerUninstallKey
+  $newClientInstalled = Test-Path $newClientUninstallKey
+
+  $safeToRemoveLegacy = if ($Mode -eq 'Server') {
+    (-not $clientServiceExists) -or $newClientInstalled
+  } else {
+    (-not $serverServiceExists) -or $newServerInstalled
+  }
+
+  if ($safeToRemoveLegacy) {
+    Remove-Item $legacyUninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }

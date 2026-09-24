@@ -16,12 +16,15 @@ public sealed class MainForm : Form
     private readonly DataGridView _installed = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
     private readonly DataGridView _jobs = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false };
     private readonly System.Windows.Forms.Timer _jobTimer = new() { Interval = 2000 };
+    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 6 * 60 * 60 * 1000 };
     private readonly Label _startupStatus = new() { AutoSize = true, Text = "Status: wird ermittelt ..." };
     private readonly CheckBox _startup = new() { Text = "Beim Autostart direkt im Infobereich starten", AutoSize = true, Checked = true };
     private readonly NotifyIcon _tray;
     private readonly ToolStripStatusLabel _operationStatus = new() { Text = "Bereit" };
     private readonly ToolStripProgressBar _operationProgress = new() { Style = ProgressBarStyle.Marquee, Visible = false, Width = 100 };
     private bool _publicNetworkWarningShown;
+    private bool _updateCheckRunning;
+    private string? _lastOfferedUpdate;
 
     private ClientConfig _config = new();
     private List<DiscoveredServer> _servers = [];
@@ -115,11 +118,15 @@ public sealed class MainForm : Form
         };
         _jobTimer.Tick += (_, _) => RefreshJobsGrid();
         _jobTimer.Start();
+        _updateTimer.Tick += async (_, _) => await CheckForUpdatesAsync(false);
+        _updateTimer.Start();
 
         FormClosed += (_, _) =>
         {
             _jobTimer.Stop();
             _jobTimer.Dispose();
+            _updateTimer.Stop();
+            _updateTimer.Dispose();
             _tray.Dispose();
         };
 
@@ -127,6 +134,7 @@ public sealed class MainForm : Form
         {
             await RefreshAllAsync();
             if (Program.StartInTray) HideToTray();
+            _ = CheckForUpdatesAsync(false);
         };
     }
 
@@ -141,13 +149,14 @@ public sealed class MainForm : Form
         _serversGrid.Columns.Add("compat", "Kompatibilität");
         _serversGrid.Columns.Add("printers", "Drucker");
 
-        _available.Columns.Add(new DataGridViewCheckBoxColumn { Name = "use", HeaderText = "Verwenden", Width = 75, FillWeight = 20 });
+        _available.Columns.Add(new DataGridViewCheckBoxColumn { Name = "use", HeaderText = "Verwenden", Width = 75, FillWeight = 20, ReadOnly = true });
         _available.Columns.Add("printer", "Verfügbarer Drucker");
         _available.Columns.Add("driver", "Treiberhinweis");
         _available.Columns.Add("status", "Status");
         _available.Columns["printer"]!.ReadOnly = true;
         _available.Columns["driver"]!.ReadOnly = true;
         _available.Columns["status"]!.ReadOnly = true;
+        _available.CellContentClick += AvailablePrinterCheckBoxClicked;
 
         _installed.Columns.Add("printer", "Installierter Drucker");
         _installed.Columns.Add("server", "Server");
@@ -166,6 +175,17 @@ public sealed class MainForm : Form
         _available.Cursor = Cursors.Default;
         _installed.Cursor = Cursors.Default;
         _jobs.Cursor = Cursors.Default;
+    }
+
+    private void AvailablePrinterCheckBoxClicked(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex != _available.Columns["use"]!.Index)
+            return;
+
+        var row = _available.Rows[e.RowIndex];
+        var cell = row.Cells["use"];
+        cell.Value = !(cell.Value is bool value && value);
+        row.Selected = true;
     }
 
     private TabPage CreateServerTab()
@@ -263,10 +283,62 @@ public sealed class MainForm : Form
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 12, 0, 0) };
         buttons.Controls.Add(MakeButton("Autostart aktivieren", async (_, _) => await SetStartupAsync(true)));
         buttons.Controls.Add(MakeButton("Autostart deaktivieren", async (_, _) => await SetStartupAsync(false)));
+        buttons.Controls.Add(MakeButton("Nach Updates suchen", async (_, _) => await CheckForUpdatesAsync(true)));
         panel.Controls.Add(buttons);
 
         tab.Controls.Add(panel);
         return tab;
+    }
+
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (_updateCheckRunning)
+        {
+            if (manual)
+                SetStatus("Updateprüfung läuft bereits …");
+            return;
+        }
+
+        _updateCheckRunning = true;
+        try
+        {
+            if (manual)
+                SetBusy("GitHub Releases werden geprüft …");
+
+            var current = typeof(MainForm).Assembly.GetName().Version ?? new Version(0, 0, 0, 0);
+            var update = await GitHubUpdateService.CheckAsync(current, SimplePrintComponent.Client);
+
+            if (update is null)
+            {
+                if (manual)
+                    SetStatus("✓ SimplePrint ist aktuell.");
+                return;
+            }
+
+            if (!manual &&
+                string.Equals(_lastOfferedUpdate, update.TagName, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _lastOfferedUpdate = update.TagName;
+            SetStatus($"Update verfügbar: {update.TagName}");
+
+            using var dialog = new UpdateForm(update);
+            dialog.ShowDialog(Visible ? this : null);
+
+            if (dialog.InstallerStarted)
+                ExitApplication();
+        }
+        catch (Exception ex)
+        {
+            if (manual)
+                SetStatus($"Updateprüfung fehlgeschlagen: {ex.Message}");
+        }
+        finally
+        {
+            _updateCheckRunning = false;
+            if (manual && _operationProgress.Visible)
+                SetIdle();
+        }
     }
 
     private static Button MakeButton(string text, EventHandler click)
