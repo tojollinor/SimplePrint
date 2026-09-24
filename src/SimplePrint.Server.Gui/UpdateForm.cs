@@ -92,10 +92,8 @@ internal sealed class UpdateForm : Form
         _progress.Visible = false;
 
         _releasePage.SetBounds(26, 383, 145, 34);
-        _later.SetBounds(370, 383, 95, 34);
-        _install.SetBounds(474, 383, 107, 34);
-
-        _install.Width = 107;
+        _later.SetBounds(330, 383, 95, 34);
+        _install.SetBounds(436, 383, 145, 34);
         _install.Click += async (_, _) => await InstallAsync();
         _later.Click += (_, _) => Close();
         _releasePage.Click += (_, _) => OpenReleasePage();
