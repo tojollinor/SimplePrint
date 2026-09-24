@@ -46,10 +46,7 @@ public static class GitHubUpdateService
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken);
 
-        // Das Repository kann bis zur Veröffentlichung privat sein oder GitHub
-        // vorübergehend nicht erreichbar sein. Automatische Prüfungen bleiben dann still.
-        if (!response.IsSuccessStatusCode)
-            return null;
+        response.EnsureSuccessStatusCode();
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
