@@ -15,7 +15,7 @@ public sealed class MainForm : Form
     private readonly Label _service = new() { AutoSize = true };
     private readonly Label _network = new() { AutoSize = true };
     private readonly Label _version = new() { AutoSize = true };
-    private readonly CheckedListBox _printers = new() { Dock = DockStyle.Fill, CheckOnClick = true, HorizontalScrollbar = true };
+    private readonly CheckedListBox _printers = new() { Dock = DockStyle.Fill, CheckOnClick = false, HorizontalScrollbar = true };
     private readonly DataGridView _firewall = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false };
     private readonly DataGridView _clients = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
     private readonly DataGridView _jobs = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
@@ -27,6 +27,7 @@ public sealed class MainForm : Form
     private readonly ToolStripStatusLabel _operationStatus = new() { Text = "Bereit" };
     private readonly ToolStripProgressBar _operationProgress = new() { Style = ProgressBarStyle.Marquee, Visible = false, Width = 100 };
     private bool _publicNetworkWarningShown;
+    private bool _allowPrinterCheckChange;
     private bool _updateCheckRunning;
     private string? _lastOfferedUpdate;
     private ServerConfig _config = new();
@@ -42,6 +43,7 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Branding.ApplyApplicationIcon(this);
         _printers.ItemCheck += Printers_ItemCheck;
+        _printers.MouseDown += Printers_MouseDown;
 
         var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 132, Padding = new Padding(10), ColumnCount = 2, RowCount = 1 };
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
@@ -136,16 +138,23 @@ public sealed class MainForm : Form
 
     private void Printers_ItemCheck(object? sender, ItemCheckEventArgs e)
     {
-        // A row click only selects the printer. The check state changes exclusively
-        // when the user actually clicks the checkbox glyph itself.
-        if (Control.MouseButtons != MouseButtons.Left)
+        // Native CheckedListBox behavior can toggle an item when its text is clicked.
+        // Every check change is therefore rejected unless it was explicitly triggered
+        // by our checkbox hit-test or by a controlled programmatic refresh.
+        if (!_allowPrinterCheckChange)
+            e.NewValue = e.CurrentValue;
+    }
+
+    private void Printers_MouseDown(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left)
             return;
 
-        var click = _printers.PointToClient(Cursor.Position);
-        if (_printers.IndexFromPoint(click) != e.Index)
+        var index = _printers.IndexFromPoint(e.Location);
+        if (index < 0)
             return;
 
-        var itemBounds = _printers.GetItemRectangle(e.Index);
+        var itemBounds = _printers.GetItemRectangle(index);
         using var graphics = _printers.CreateGraphics();
         var glyphSize = CheckBoxRenderer.GetGlyphSize(
             graphics,
@@ -157,8 +166,26 @@ public sealed class MainForm : Form
             glyphSize.Width,
             glyphSize.Height);
 
-        if (!glyphBounds.Contains(click))
-            e.NewValue = e.CurrentValue;
+        if (glyphBounds.Contains(e.Location))
+        {
+            SetPrinterChecked(index, !_printers.GetItemChecked(index));
+            return;
+        }
+
+        _printers.SelectedIndex = index;
+    }
+
+    private void SetPrinterChecked(int index, bool value)
+    {
+        _allowPrinterCheckChange = true;
+        try
+        {
+            _printers.SetItemChecked(index, value);
+        }
+        finally
+        {
+            _allowPrinterCheckChange = false;
+        }
     }
 
     private TabPage CreatePrinterTab()
@@ -469,7 +496,7 @@ public sealed class MainForm : Form
                 var index = _printers.Items.Add(choice);
                 var enabled = _config.Printers.Any(
                     x => x.QueueName.Equals(p.Name, StringComparison.OrdinalIgnoreCase) && x.Enabled);
-                _printers.SetItemChecked(index, enabled);
+                SetPrinterChecked(index, enabled);
             }
 
             SetStatus(
