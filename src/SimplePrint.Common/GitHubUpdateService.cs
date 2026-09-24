@@ -5,7 +5,14 @@ using System.Text.Json;
 
 namespace SimplePrint.Common;
 
+public enum SimplePrintComponent
+{
+    Server,
+    Client
+}
+
 public sealed record ReleaseUpdateInfo(
+    SimplePrintComponent Component,
     Version Version,
     string TagName,
     string ReleaseUrl,
@@ -38,6 +45,7 @@ public static class GitHubUpdateService
 
     public static async Task<ReleaseUpdateInfo?> CheckAsync(
         Version currentVersion,
+        SimplePrintComponent component,
         CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseApi);
@@ -75,6 +83,10 @@ public static class GitHubUpdateService
             assets.ValueKind != JsonValueKind.Array)
             return null;
 
+        var expectedPrefix = component == SimplePrintComponent.Server
+            ? "SimplePrint-Server-Setup-"
+            : "SimplePrint-Client-Setup-";
+
         foreach (var asset in assets.EnumerateArray())
         {
             var name = asset.TryGetProperty("name", out var nameElement)
@@ -82,7 +94,7 @@ public static class GitHubUpdateService
                 : null;
 
             if (string.IsNullOrWhiteSpace(name) ||
-                !name.StartsWith("SimplePrint-Setup-", StringComparison.OrdinalIgnoreCase) ||
+                !name.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase) ||
                 !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
                 continue;
 
@@ -109,6 +121,7 @@ public static class GitHubUpdateService
             }
 
             return new ReleaseUpdateInfo(
+                component,
                 releaseVersion,
                 tagName ?? releaseVersion.ToString(),
                 releaseUrl,
@@ -128,7 +141,12 @@ public static class GitHubUpdateService
         CancellationToken cancellationToken = default)
     {
         var safeName = Path.GetFileName(release.InstallerName);
+        var expectedPrefix = release.Component == SimplePrintComponent.Server
+            ? "SimplePrint-Server-Setup-"
+            : "SimplePrint-Client-Setup-";
+
         if (string.IsNullOrWhiteSpace(safeName) ||
+            !safeName.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase) ||
             !safeName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Der Release enthält keinen gültigen SimplePrint-Installer.");
 
