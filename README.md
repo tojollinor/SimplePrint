@@ -1,4 +1,4 @@
-# SimplePrint 0.2.3
+# SimplePrint 0.2.4
 
 Kleiner Windows-Druckserver mit zwei Druckpfaden: **RAW-Tunnel für klassische/lokale Treiber** und **direkte IPP-/WSD-Anbindung für Microsoft IPP Class Driver**, plus Diagnose.
 
@@ -34,9 +34,9 @@ USB-/lokaler Drucker
 
 ## Installation aus fertigem Setup
 
-1. Auf dem Druckserver `SimplePrint-Server-Setup-0.2.3.exe` installieren.
+1. Auf dem Druckserver `SimplePrint-Server-Setup-0.2.4.exe` installieren.
 2. `SimplePrint Server` öffnen und die gewünschten lokalen Drucker freigeben.
-3. Auf jedem Windows-10/11-Client `SimplePrint-Client-Setup-0.2.3.exe` installieren.
+3. Auf jedem Windows-10/11-Client `SimplePrint-Client-Setup-0.2.4.exe` installieren.
 4. `SimplePrint Client` öffnen. Der Server sollte automatisch erscheinen.
 5. Drucker über die Checkbox auswählen und die Druckerauswahl speichern.
 6. Bei Class-Driver-Tunnelqueues installiert/verwendet SimplePrint ausschließlich den **exakt gleichen Treiber wie auf dem Server**. Ein beliebiger Ersatztreiber wird nicht mehr akzeptiert.
@@ -68,8 +68,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 Die veröffentlichten Programme landen in `dist\`. Wenn Inno Setup vorhanden ist, entsteht zusätzlich:
 
 ```text
-dist\Installer\SimplePrint-Server-Setup-0.2.3.exe
-dist\Installer\SimplePrint-Client-Setup-0.2.3.exe
+dist\Installer\SimplePrint-Server-Setup-0.2.4.exe
+dist\Installer\SimplePrint-Client-Setup-0.2.4.exe
 ```
 
 ## Diagnose
@@ -94,9 +94,9 @@ Beim Brother DCP-L2510D muss der Client bei einer Class-Driver-Freigabe **densel
 
 ## Stand
 
-Die aktuelle Entwicklungsfassung ist `0.2.3`. Sie ergänzt direkten IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung und einen harten Schutz gegen rekursive SimplePrint-Druckschleifen. Enthalten ist außerdem die End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
+Die aktuelle Entwicklungsfassung ist `0.2.4`. Sie ergänzt direkten IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung und einen harten Schutz gegen rekursive SimplePrint-Druckschleifen. Enthalten ist außerdem die End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
 
-Zusätzlich enthalten sind Versions-/Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Druckauftrags-Historienverwaltung, erweiterte Diagnosepakete, generische Class-Driver-Warnungen und Ampelstatus im Tray. Ab 0.2.3 wird die Checkbox per exakter Trefferprüfung behandelt: Ein Klick auf Druckername oder übrige Zeile markiert nur den Drucker; ausschließlich ein Klick direkt auf das Checkbox-Symbol setzt oder entfernt den Haken. Herausgeber-Metadaten verweisen auf `tojollinor` bzw. das GitHub-Repository.
+Zusätzlich enthalten sind Versions-/Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Druckauftrags-Historienverwaltung, erweiterte Diagnosepakete, generische Class-Driver-Warnungen und Ampelstatus im Tray. Ab 0.2.3 wird die Checkbox per exakter Trefferprüfung behandelt: Ein Klick auf Druckername oder übrige Zeile markiert nur den Drucker; ausschließlich ein Klick direkt auf das Checkbox-Symbol setzt oder entfernt den Haken. Ab 0.2.4 zeigt die Druckbereitschaft konkrete Fehlerursachen statt Sammelmeldungen. Erfolgreiche Prüfungen erhalten ein grünes ✓, echte Fehler ein rotes ✗; bei nicht verfügbaren oder nicht geprüften Werten wird bewusst kein Symbol angezeigt. Windows-Queue-Status wie `NoToner` werden ebenfalls ausgewertet, sodass z. B. ausdrücklich **„Verbindung zum Drucker vorhanden, aber Toner leer.“** gemeldet wird. Herausgeber-Metadaten verweisen auf `tojollinor` bzw. das GitHub-Repository.
 
 ## Logo und Branding
 

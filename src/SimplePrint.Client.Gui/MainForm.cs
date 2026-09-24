@@ -1003,8 +1003,10 @@ public sealed class MainForm : Form
             var health = await QueryServerPrinterHealthAsync(mapping);
 
             health.ClientTransportStatus = local.Detail;
+            health.ClientTransportReady = local.Ready;
             health.ServerTransportStatus =
                 $"Server '{mapping.ServerName}' erreichbar · Protokoll {Protocol.Version}";
+            health.ServerTransportReady = true;
 
             foreach (var warning in local.Warnings)
             {
@@ -1015,15 +1017,17 @@ public sealed class MainForm : Form
             if (!local.Ready)
             {
                 health.Level = "Red";
-                health.Summary =
-                    "Nicht druckbereit: Die lokale Client-Druckkette ist nicht vollständig funktionsfähig.";
+                var cause = local.Problems.FirstOrDefault();
+                health.Summary = string.IsNullOrWhiteSpace(cause)
+                    ? "Nicht druckbereit: Lokaler Client-Druckpfad fehlerhaft."
+                    : $"Nicht druckbereit: {cause}";
             }
             else if (local.Warnings.Count > 0 &&
                      health.Level.Equals("Green", StringComparison.OrdinalIgnoreCase))
             {
                 health.Level = "Yellow";
                 health.Summary =
-                    "Druck wahrscheinlich möglich, aber der Client meldet einen Treiberhinweis.";
+                    $"Druckverbindung vorhanden, Client-Hinweis: {local.Warnings[0]}";
             }
 
             using var dialog = new PrinterHealthForm(health);
