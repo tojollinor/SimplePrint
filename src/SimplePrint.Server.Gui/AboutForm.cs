@@ -68,7 +68,7 @@ internal sealed class AboutForm : Form
             Top = 224,
             Width = 500,
             Height = 22,
-            Text = "© 2026 SimplePrint"
+            Text = "© 2026 tojollinor"
         };
 
         var link = new LinkLabel
