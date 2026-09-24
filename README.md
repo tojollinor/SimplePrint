@@ -43,6 +43,14 @@ USB-/lokaler Drucker
 7. Microsoft-IPP/WSD-Freigaben werden, sofern die Geräteadresse ermittelbar ist, als **direkte IPP-/WSD-Queue** installiert.
 8. Mit **Testseite** den vollständigen Weg prüfen.
 
+## Automatische Updates ab 0.2.2
+
+Server- und Client-GUI prüfen beim Start sowie anschließend alle sechs Stunden den neuesten öffentlichen GitHub-Release unter `tojollinor/SimplePrint`. Ist eine neuere Version verfügbar, erscheint ein eigener SimplePrint-Dialog mit Release-Hinweisen.
+
+Über **Jetzt aktualisieren** wird der zugehörige `SimplePrint-Setup-<Version>.exe` direkt aus dem GitHub-Release in ein temporäres Update-Verzeichnis geladen und anschließend gestartet. Dateigröße und, sofern GitHub für das Asset einen SHA-256-Digest bereitstellt, auch die Prüfsumme werden vor dem Start kontrolliert. Alternativ lässt sich der Release im Browser öffnen oder die Aktualisierung auf später verschieben.
+
+Unter **Allgemein → Nach Updates suchen** kann die Prüfung auf Server und Client jederzeit manuell ausgelöst werden. Solange das Repository privat ist, kann die öffentliche Release-API ohne Authentifizierung nicht verwendet werden; für die automatische Updatefunktion muss das Repository öffentlich erreichbar sein.
+
 ## Build
 
 Voraussetzungen auf einem Windows-x64-Rechner:
