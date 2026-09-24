@@ -306,7 +306,7 @@ public sealed class MainForm : Form
                 SetBusy("GitHub Releases werden geprüft …");
 
             var current = typeof(MainForm).Assembly.GetName().Version ?? new Version(0, 0, 0, 0);
-            var update = await GitHubUpdateService.CheckAsync(current);
+            var update = await GitHubUpdateService.CheckAsync(current, SimplePrintComponent.Client);
 
             if (update is null)
             {
