@@ -38,6 +38,7 @@ public sealed class MainForm : Form
         MinimumSize = new Size(560, 440);
         StartPosition = FormStartPosition.CenterScreen;
         Branding.ApplyApplicationIcon(this);
+        _printers.ItemCheck += Printers_ItemCheck;
 
         var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 132, Padding = new Padding(10), ColumnCount = 2, RowCount = 1 };
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
@@ -123,6 +124,33 @@ public sealed class MainForm : Form
             await RefreshAllAsync();
             if (Program.StartInTray) HideToTray();
         };
+    }
+
+    private void Printers_ItemCheck(object? sender, ItemCheckEventArgs e)
+    {
+        // A row click only selects the printer. The check state changes exclusively
+        // when the user actually clicks the checkbox glyph itself.
+        if (Control.MouseButtons != MouseButtons.Left)
+            return;
+
+        var click = _printers.PointToClient(Cursor.Position);
+        if (_printers.IndexFromPoint(click) != e.Index)
+            return;
+
+        var itemBounds = _printers.GetItemRectangle(e.Index);
+        using var graphics = _printers.CreateGraphics();
+        var glyphSize = CheckBoxRenderer.GetGlyphSize(
+            graphics,
+            System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal);
+
+        var glyphBounds = new Rectangle(
+            itemBounds.Left + 1,
+            itemBounds.Top + Math.Max(0, (itemBounds.Height - glyphSize.Height) / 2),
+            glyphSize.Width,
+            glyphSize.Height);
+
+        if (!glyphBounds.Contains(click))
+            e.NewValue = e.CurrentValue;
     }
 
     private TabPage CreatePrinterTab()
