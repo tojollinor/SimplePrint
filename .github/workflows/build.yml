@@ -53,7 +53,7 @@ jobs:
             gh release create $tag `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: konkrete Druckbereitschaftsursachen, grüne ✓ / rote ✗ in der Prüfansicht, Auswertung von Windows-Queue-Fehlern wie NoToner sowie die bisherigen getrennten Server-/Client-Installer, Auto-Updates, IPP-/WSD-, Class-Driver-, Loop-Schutz- und Diagnosefunktionen."
+              --notes "SimplePrint ${version}: concrete printer readiness causes, green/red status markers, Windows queue error detection including NoToner, separate server/client installers, automatic updates, IPP/WSD, class-driver, loop protection and diagnostics."
           }
 
           foreach ($installer in $installers) {
