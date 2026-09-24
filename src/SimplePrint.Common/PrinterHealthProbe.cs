@@ -50,6 +50,7 @@ public static class PrinterHealthProbe
             ContainsAny(queue.PrinterStatus, "paused", "angehalten", "pause");
         result.DeviceAddress = queue.DeviceAddress;
         result.DevicePort = queue.DevicePort;
+        ApplyWindowsQueueWarnings(result, queue.PrinterStatus);
 
         if (!queue.Exists)
         {
@@ -331,6 +332,32 @@ if($port) {{
             2 => "Unbekannt",
             _ => "Sonstiger Gerätezustand"
         };
+
+    private static void ApplyWindowsQueueWarnings(
+        PrinterHealthStatus result,
+        string? queueStatus)
+    {
+        if (ContainsAny(queueStatus, "notoner", "no toner", "toner empty", "toner leer"))
+            AddWarningOnce(result, "Toner leer");
+
+        if (ContainsAny(queueStatus, "paperout", "no paper", "kein papier"))
+            AddWarningOnce(result, "Kein Papier");
+
+        if (ContainsAny(queueStatus, "paperjam", "paper jam", "papierstau"))
+            AddWarningOnce(result, "Papierstau");
+
+        if (ContainsAny(queueStatus, "dooropen", "door open", "klappe offen"))
+            AddWarningOnce(result, "Klappe offen");
+
+        if (ContainsAny(queueStatus, "outputbinfull", "output bin full", "ausgabefach voll"))
+            AddWarningOnce(result, "Ausgabefach voll");
+    }
+
+    private static void AddWarningOnce(PrinterHealthStatus result, string warning)
+    {
+        if (!result.Warnings.Contains(warning, StringComparer.OrdinalIgnoreCase))
+            result.Warnings.Add(warning);
+    }
 
     private static void ApplyPrinterErrorBits(PrinterHealthStatus result, byte[] bytes)
     {
