@@ -141,13 +141,14 @@ public sealed class MainForm : Form
         _serversGrid.Columns.Add("compat", "Kompatibilität");
         _serversGrid.Columns.Add("printers", "Drucker");
 
-        _available.Columns.Add(new DataGridViewCheckBoxColumn { Name = "use", HeaderText = "Verwenden", Width = 75, FillWeight = 20 });
+        _available.Columns.Add(new DataGridViewCheckBoxColumn { Name = "use", HeaderText = "Verwenden", Width = 75, FillWeight = 20, ReadOnly = true });
         _available.Columns.Add("printer", "Verfügbarer Drucker");
         _available.Columns.Add("driver", "Treiberhinweis");
         _available.Columns.Add("status", "Status");
         _available.Columns["printer"]!.ReadOnly = true;
         _available.Columns["driver"]!.ReadOnly = true;
         _available.Columns["status"]!.ReadOnly = true;
+        _available.CellContentClick += AvailablePrinterCheckBoxClicked;
 
         _installed.Columns.Add("printer", "Installierter Drucker");
         _installed.Columns.Add("server", "Server");
@@ -166,6 +167,17 @@ public sealed class MainForm : Form
         _available.Cursor = Cursors.Default;
         _installed.Cursor = Cursors.Default;
         _jobs.Cursor = Cursors.Default;
+    }
+
+    private void AvailablePrinterCheckBoxClicked(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex != _available.Columns["use"]!.Index)
+            return;
+
+        var row = _available.Rows[e.RowIndex];
+        var cell = row.Cells["use"];
+        cell.Value = !(cell.Value is bool value && value);
+        row.Selected = true;
     }
 
     private TabPage CreateServerTab()
