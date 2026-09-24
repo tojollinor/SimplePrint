@@ -154,8 +154,6 @@ public sealed class MainForm : Form
         if (index < 0)
             return;
 
-        _printers.SelectedIndex = index;
-
         var itemBounds = _printers.GetItemRectangle(index);
         using var graphics = _printers.CreateGraphics();
         var glyphSize = CheckBoxRenderer.GetGlyphSize(
@@ -168,10 +166,13 @@ public sealed class MainForm : Form
             glyphSize.Width,
             glyphSize.Height);
 
-        if (!glyphBounds.Contains(e.Location))
+        if (glyphBounds.Contains(e.Location))
+        {
+            SetPrinterChecked(index, !_printers.GetItemChecked(index));
             return;
+        }
 
-        SetPrinterChecked(index, !_printers.GetItemChecked(index));
+        _printers.SelectedIndex = index;
     }
 
     private void SetPrinterChecked(int index, bool value)
