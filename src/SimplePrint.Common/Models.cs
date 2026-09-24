@@ -169,7 +169,9 @@ public sealed class PrinterHealthStatus
     public bool? TcpReachable { get; set; }
     public bool SnmpAvailable { get; set; }
     public string ClientTransportStatus { get; set; } = "";
+    public bool? ClientTransportReady { get; set; }
     public string ServerTransportStatus { get; set; } = "";
+    public bool? ServerTransportReady { get; set; }
     public string DeviceStatus { get; set; } = "";
     public string PaperStatus { get; set; } = "";
     public List<PrinterSupplyStatus> Supplies { get; set; } = [];
