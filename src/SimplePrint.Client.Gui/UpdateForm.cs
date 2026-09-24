@@ -19,7 +19,7 @@ internal sealed class UpdateForm : Form
     {
         _release = release;
 
-        Text = "SimplePrint Update";
+        Text = "SimplePrint Client Update";
         ClientSize = new Size(610, 430);
         MinimumSize = new Size(610, 430);
         StartPosition = FormStartPosition.CenterScreen;
@@ -59,7 +59,7 @@ internal sealed class UpdateForm : Form
             Top = 100,
             Width = 555,
             Height = 44,
-            Text = "Der Installer wird direkt aus dem offiziellen GitHub-Release von tojollinor/SimplePrint geladen. Anschließend übernimmt das normale SimplePrint-Setup die Aktualisierung."
+            Text = "Der passende Client-Installer wird direkt aus dem offiziellen GitHub-Release von tojollinor/SimplePrint geladen und anschließend gestartet."
         };
 
         var notesLabel = new Label
