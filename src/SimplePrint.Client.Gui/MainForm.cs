@@ -183,30 +183,32 @@ public sealed class MainForm : Form
             return;
 
         var row = _available.Rows[e.RowIndex];
+
+        if (e.ColumnIndex == _available.Columns["use"]!.Index)
+        {
+            var cellRect = _available.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, false);
+            using var graphics = _available.CreateGraphics();
+            var glyphSize = CheckBoxRenderer.GetGlyphSize(
+                graphics,
+                System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal);
+
+            var glyphBounds = new Rectangle(
+                cellRect.Left + Math.Max(0, (cellRect.Width - glyphSize.Width) / 2),
+                cellRect.Top + Math.Max(0, (cellRect.Height - glyphSize.Height) / 2),
+                glyphSize.Width,
+                glyphSize.Height);
+
+            var click = new Point(cellRect.Left + e.X, cellRect.Top + e.Y);
+            if (glyphBounds.Contains(click))
+            {
+                var cell = row.Cells["use"];
+                cell.Value = !(cell.Value is bool value && value);
+                return;
+            }
+        }
+
         row.Selected = true;
         _available.CurrentCell = row.Cells[Math.Max(0, e.ColumnIndex)];
-
-        if (e.ColumnIndex != _available.Columns["use"]!.Index)
-            return;
-
-        var cellRect = _available.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, false);
-        using var graphics = _available.CreateGraphics();
-        var glyphSize = CheckBoxRenderer.GetGlyphSize(
-            graphics,
-            System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal);
-
-        var glyphBounds = new Rectangle(
-            cellRect.Left + Math.Max(0, (cellRect.Width - glyphSize.Width) / 2),
-            cellRect.Top + Math.Max(0, (cellRect.Height - glyphSize.Height) / 2),
-            glyphSize.Width,
-            glyphSize.Height);
-
-        var click = new Point(cellRect.Left + e.X, cellRect.Top + e.Y);
-        if (!glyphBounds.Contains(click))
-            return;
-
-        var cell = row.Cells["use"];
-        cell.Value = !(cell.Value is bool value && value);
     }
 
     private TabPage CreateServerTab()
