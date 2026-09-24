@@ -383,34 +383,47 @@ if($port) {{
             return;
         }
 
-        if (result.QueueOffline || result.QueuePaused)
+        if (result.QueuePaused)
         {
             result.Level = "Red";
-            result.Summary = result.QueuePaused
-                ? "Nicht druckbereit: Warteschlange ist pausiert."
-                : "Nicht druckbereit: Warteschlange/Drucker ist offline.";
+            result.Summary = "Nicht druckbereit: Windows-Warteschlange ist pausiert.";
             return;
         }
 
-        var critical = result.Warnings.Any(x =>
-            ContainsAny(
-                x,
-                "kein papier",
-                "toner leer",
-                "klappe offen",
-                "papierstau",
-                "offline",
-                "service erforderlich",
-                "papierfach fehlt",
-                "ausgabefach fehlt",
-                "verbrauchsmaterial fehlt",
-                "ausgabefach voll",
-                "papierfach leer"));
-
-        if (critical)
+        if (result.QueueOffline)
         {
             result.Level = "Red";
-            result.Summary = "Nicht druckbereit: Das Gerät meldet einen Fehler.";
+            result.Summary = "Nicht druckbereit: Drucker bzw. Windows-Warteschlange ist offline.";
+            return;
+        }
+
+        var emptySupply = result.Supplies.FirstOrDefault(x =>
+            x.State.Equals("Leer", StringComparison.OrdinalIgnoreCase));
+
+        var tonerEmpty =
+            result.Warnings.Any(x => ContainsAny(x, "toner leer")) ||
+            (emptySupply is not null && ContainsAny(emptySupply.Name, "toner", "cartridge", "kartusche"));
+
+        if (tonerEmpty)
+        {
+            result.Level = "Red";
+            result.Summary = "Verbindung zum Drucker vorhanden, aber Toner leer.";
+            return;
+        }
+
+        if (emptySupply is not null)
+        {
+            result.Level = "Red";
+            result.Summary =
+                $"Verbindung zum Drucker vorhanden, aber Verbrauchsmaterial leer: {emptySupply.Name}.";
+            return;
+        }
+
+        var criticalReason = GetCriticalReason(result.Warnings);
+        if (!string.IsNullOrWhiteSpace(criticalReason))
+        {
+            result.Level = "Red";
+            result.Summary = $"Verbindung zum Drucker vorhanden, aber {criticalReason}.";
             return;
         }
 
@@ -420,17 +433,27 @@ if($port) {{
             !result.SnmpAvailable)
         {
             result.Level = "Red";
-            result.Summary = "Nicht druckbereit: Das Netzwerkgerät ist nicht erreichbar.";
+            result.Summary = "Nicht druckbereit: Netzwerkverbindung zum Drucker nicht möglich.";
             return;
         }
 
-        var lowSupply = result.Supplies.Any(x =>
+        var lowSupply = result.Supplies.FirstOrDefault(x =>
             x.State.Equals("Niedrig", StringComparison.OrdinalIgnoreCase));
 
-        if (lowSupply || result.Warnings.Count > 0)
+        if (lowSupply is not null)
         {
             result.Level = "Yellow";
-            result.Summary = "Druck wahrscheinlich möglich, aber das Gerät meldet eine Warnung.";
+            var level = lowSupply.Percent is null ? "" : $" ({lowSupply.Percent} %)";
+            result.Summary =
+                $"Verbindung zum Drucker vorhanden, Verbrauchsmaterial niedrig: {lowSupply.Name}{level}.";
+            return;
+        }
+
+        var firstWarning = result.Warnings.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(firstWarning))
+        {
+            result.Level = "Yellow";
+            result.Summary = $"Druckverbindung vorhanden, Hinweis vom Drucker: {firstWarning}.";
             return;
         }
 
@@ -446,6 +469,31 @@ if($port) {{
 
         result.Level = "Green";
         result.Summary = "Bereit: Keine bekannten Hindernisse gefunden.";
+    }
+
+    private static string? GetCriticalReason(IEnumerable<string> warnings)
+    {
+        var ordered = new (string Needle, string Text)[]
+        {
+            ("kein papier", "kein Papier vorhanden"),
+            ("papierfach leer", "Papierfach leer"),
+            ("papierstau", "Papierstau gemeldet"),
+            ("klappe offen", "Klappe offen"),
+            ("drucker offline", "Drucker offline"),
+            ("service erforderlich", "Service erforderlich"),
+            ("papierfach fehlt", "Papierfach fehlt"),
+            ("ausgabefach fehlt", "Ausgabefach fehlt"),
+            ("verbrauchsmaterial fehlt", "Verbrauchsmaterial fehlt"),
+            ("ausgabefach voll", "Ausgabefach voll")
+        };
+
+        foreach (var candidate in ordered)
+        {
+            if (warnings.Any(x => ContainsAny(x, candidate.Needle)))
+                return candidate.Text;
+        }
+
+        return null;
     }
 
     private static bool IsGenericClassDriver(string driver) =>
