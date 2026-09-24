@@ -1,8 +1,8 @@
-# SimplePrint 0.2.0
+# SimplePrint 0.2.1
 
-Kleiner Windows-Druckserver für genau einen Zweck: **Drucken ohne Rendering-Veränderung**, plus Diagnose.
+Kleiner Windows-Druckserver mit zwei Druckpfaden: **RAW-Tunnel für klassische/lokale Treiber** und **direkte IPP-/WSD-Anbindung für Microsoft IPP Class Driver**, plus Diagnose.
 
-SimplePrint ersetzt weder den nativen Druckertreiber noch verarbeitet es PDF/PostScript. Der Client rendert mit dem normalen Hersteller-Treiber. SimplePrint tunnelt danach nur den fertigen RAW-Datenstrom zum Server und gibt ihn dort als `RAW` an den Windows-Spooler weiter.
+Bei Tunnel-Druckern rendert der Client mit exakt dem passenden Treiber und SimplePrint überträgt den fertigen Datenstrom zum Server. Bei Microsoft-IPP/WSD-Druckern installiert SimplePrint dagegen eine echte direkte Windows-Geräteverbindung, damit IPP-Fähigkeiten und Statusabfragen nicht durch einen RAW-Proxy verloren gehen.
 
 ## Enthalten
 
@@ -34,13 +34,14 @@ USB-/lokaler Drucker
 
 ## Installation aus fertigem Setup
 
-1. Auf dem Druckserver `SimplePrint-Setup-0.2.0.exe` starten und **PrintServer** auswählen.
+1. Auf dem Druckserver `SimplePrint-Setup-0.2.1.exe` starten und **PrintServer** auswählen.
 2. `SimplePrint Server` öffnen und den lokal installierten Drucker über **Drucker hinzufügen** freigeben.
 3. Auf einem Windows-10/11-Client dasselbe Setup starten und **PrintClient** auswählen.
 4. `SimplePrint Client` öffnen. Der Server sollte automatisch erscheinen.
 5. Drucker markieren → **Drucker installieren**.
-6. Wenn der identische Treibername lokal vorhanden ist, wird er automatisch benutzt. Andernfalls fragt die GUI nach dem passenden installierten Treiber.
-7. Mit **Testseite** den vollständigen Weg prüfen.
+6. Bei Class-Driver-Tunnelqueues installiert/verwendet SimplePrint ausschließlich den **exakt gleichen Treiber wie auf dem Server**. Ein beliebiger Ersatztreiber wird nicht mehr akzeptiert.
+7. Microsoft-IPP/WSD-Freigaben werden, sofern die Geräteadresse ermittelbar ist, als **direkte IPP-/WSD-Queue** installiert.
+8. Mit **Testseite** den vollständigen Weg prüfen.
 
 ## Build
 
@@ -59,7 +60,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 Die veröffentlichten Programme landen in `dist\`. Wenn Inno Setup vorhanden ist, entsteht zusätzlich:
 
 ```text
-dist\Installer\SimplePrint-Setup-0.2.0.exe
+dist\Installer\SimplePrint-Setup-0.2.1.exe
 ```
 
 ## Diagnose
@@ -80,11 +81,11 @@ C:\ProgramData\SimplePrint\Client\
 
 ## Wichtiger Test für deinen Fall
 
-Beim Brother DCP-L2510D sollte auf dem **Client der native Brother-Treiber** ausgewählt werden. Dadurch wird das Dokument dort gerendert. SimplePrint überträgt anschließend nur den fertigen Druckdatenstrom und führt keine PostScript→PDF- oder PDF→GDI-Konvertierung wie Mobility Print durch.
+Beim Brother DCP-L2510D muss der Client bei einer Class-Driver-Freigabe **denselben Brother-Treiber wie der Server** verwenden. SimplePrint versucht diesen Treiber aus dem lokalen Windows-Treiberspeicher zu installieren. Der bisher mögliche Ersatz durch z. B. einen abweichenden Universal-PCL-Treiber wird blockiert.
 
 ## Stand
 
-Die aktuelle Fassung ist `0.2.0`. Sie erweitert SimplePrint um eine echte End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
+Die aktuelle Fassung ist `0.2.1`. Sie ergänzt direkten IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung und einen harten Schutz gegen rekursive SimplePrint-Druckschleifen. Enthalten ist außerdem die End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
 
 Zusätzlich enthalten sind Versions-/Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Druckauftrags-Historienverwaltung, erweiterte Diagnosepakete, generische Class-Driver-Warnungen und Ampelstatus im Tray.
 
@@ -114,10 +115,10 @@ Windows-Warteschlange
 
 Hinweis: **„Gedruckt“** wird nur angezeigt, wenn der Windows-Spooler diesen Status tatsächlich meldet. Verschwindet ein Auftrag nach erfolgreicher Übergabe aus der Warteschlange, ohne dass der Drucker einen separaten Printed-Status liefert, zeigt SimplePrint **„Abgeschlossen“**. Das bestätigt den Abschluss im Windows-Drucksystem, nicht mechanisch das Vorhandensein eines Blattes im Ausgabefach.
 
-Für den RAW-Tunnel werden Hersteller-PCL6- oder PostScript-Treiber empfohlen. Der Microsoft IPP Class Driver kann eine echte IPP-Gegenstelle erwarten und wird deshalb in der Schnelldiagnose entsprechend gekennzeichnet.
+Der Microsoft IPP Class Driver wird nicht mehr über den RAW-Tunnel betrieben, sobald der Server eine direkte IPP-/WSD-Geräteadresse liefern kann. Diese direkten Druckaufträge laufen nicht durch das SimplePrint-Gateway und erscheinen deshalb nicht in der Tunnel-Jobhistorie. Class-Driver, die weiterhin den Tunnel nutzen, müssen auf Client und Server exakt übereinstimmen.
 
 
-## Druckbereitschaft in 0.2.0
+## Druckbereitschaft ab 0.2.0
 
 Die Prüfung unterscheidet zwischen:
 
@@ -134,6 +135,6 @@ Bei Netzwerkdruckern versucht SimplePrint zusätzlich:
 - Printer-MIB Fehlerstatus
 - Verbrauchsmaterialbeschreibung, Maximalstand und aktuellen Stand
 
-Bei USB-, WSD- oder sonstigen lokalen Druckern stehen nur die Informationen zur Verfügung, die Windows bzw. der installierte Treiber bereitstellt. SNMP-Werte werden nur bei erreichbaren Netzwerkdruckern angezeigt; fehlende Werte werden nicht geschätzt oder erfunden.er an den Spooler zurückmeldet.
+Bei USB-, WSD- oder sonstigen lokalen Druckern stehen nur die Informationen zur Verfügung, die Windows bzw. der installierte Treiber bereitstellt. SNMP-Werte werden nur bei erreichbaren Netzwerkdruckern angezeigt; fehlende Werte werden nicht geschätzt oder erfunden.
 
 Eine grüne Prüfung bedeutet: **Nach allem technisch Abfragbaren sollte der Druckpfad funktionieren.** Sie kann ohne tatsächlichen Ausdruck nicht mechanisch bestätigen, dass ein Blatt Papier aus dem Gerät gekommen ist.

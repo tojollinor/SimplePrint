@@ -57,5 +57,5 @@ jobs:
             gh release create $tag "$($installer.FullName)" `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: End-to-End-Druckbereitschaft mit Ampelstatus, SNMP- und Printer-MIB-Abfrage, Toner/Papier/Gerätestatus, Versions- und Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Jobhistorienverwaltung, erweiterte Diagnosepakete und Treiberwarnungen."
+              --notes "SimplePrint ${version}: direkter IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung im Tunnel, Schutz gegen rekursive SimplePrint-Druckschleifen sowie End-to-End-Druckbereitschaft mit Geräte- und Spoolerstatus."
           }

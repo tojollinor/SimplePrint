@@ -59,10 +59,24 @@ public static class PrinterHealthProbe
             return result;
         }
 
-        if (IsGenericClassDriver(queue.DriverName))
+        if (PrinterTransport.IsSimplePrintPort(queue.PortName) ||
+            PrinterTransport.IsLoopbackProxy(queue.DeviceAddress, queue.DevicePort))
+        {
+            result.Level = "Red";
+            result.Summary = "Nicht druckbereit: Druckschleife erkannt.";
+            result.Warnings.Add(
+                "Die Server-Warteschlange zeigt auf einen lokalen SimplePrint-Proxy. Diese Konfiguration wird blockiert.");
+            return result;
+        }
+
+        var validMicrosoftDirect =
+            PrinterTransport.IsMicrosoftIppClassDriver(queue.DriverName) &&
+            !PrinterTransport.IsSimplePrintPort(queue.PortName);
+
+        if (IsGenericClassDriver(queue.DriverName) && !validMicrosoftDirect)
         {
             result.Warnings.Add(
-                $"Generischer/Class-Treiber erkannt: {queue.DriverName}. Für RAW-Druck wird ein Hersteller-PCL6- oder PostScript-Treiber empfohlen.");
+                $"Class-Treiber erkannt: {queue.DriverName}. Im SimplePrint-Tunnel muss auf dem Client exakt derselbe Treiber verwendet werden.");
         }
 
         if (!string.IsNullOrWhiteSpace(queue.DeviceAddress))

@@ -240,7 +240,7 @@ public sealed class ClientWorker : BackgroundService
         lock (_sync)
         {
             var wanted = _config.Mappings
-                .Where(m => m.Enabled)
+                .Where(m => m.Enabled && !PrinterTransport.IsDirect(m.TransportMode))
                 .ToDictionary(m => m.PortName, StringComparer.OrdinalIgnoreCase);
 
             foreach (var old in _listeners.Keys.Where(k => !wanted.ContainsKey(k)).ToList())

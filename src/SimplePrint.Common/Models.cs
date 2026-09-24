@@ -17,6 +17,10 @@ public sealed class SharedPrinterConfig
     public string QueueName { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public string DriverName { get; set; } = "";
+    public string PortName { get; set; } = "";
+    public string TransportMode { get; set; } = PrinterTransport.Tunnel;
+    public string DirectAddress { get; set; } = "";
+    public string DeviceUuid { get; set; } = "";
     public bool Enabled { get; set; } = true;
 }
 
@@ -41,6 +45,9 @@ public sealed class ClientPrinterMapping
     public string DriverName { get; set; } = "";
     public string PortName { get; set; } = "";
     public int LocalProxyPort { get; set; }
+    public string TransportMode { get; set; } = PrinterTransport.Tunnel;
+    public string DirectAddress { get; set; } = "";
+    public string DeviceUuid { get; set; } = "";
     public bool Enabled { get; set; } = true;
 }
 
@@ -60,6 +67,10 @@ public sealed class DiscoveredPrinter
     public Guid Id { get; set; }
     public string DisplayName { get; set; } = "";
     public string DriverName { get; set; } = "";
+    public string PortName { get; set; } = "";
+    public string TransportMode { get; set; } = PrinterTransport.Tunnel;
+    public string DirectAddress { get; set; } = "";
+    public string DeviceUuid { get; set; } = "";
     public string Status { get; set; } = "Unknown";
 }
 
@@ -94,6 +105,11 @@ public sealed class LocalPrinterInfo
     public string DriverName { get; set; } = "";
     public string PortName { get; set; } = "";
     public string PrinterStatus { get; set; } = "";
+    public string TransportMode { get; set; } = PrinterTransport.Tunnel;
+    public string DirectAddress { get; set; } = "";
+    public string DeviceUuid { get; set; } = "";
+    public string PrinterHostAddress { get; set; } = "";
+    public int? PortNumber { get; set; }
 }
 
 

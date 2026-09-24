@@ -152,7 +152,7 @@ public sealed class MainForm : Form
         _installed.Columns.Add("printer", "Installierter Drucker");
         _installed.Columns.Add("server", "Server");
         _installed.Columns.Add("driver", "Treiber");
-        _installed.Columns.Add("port", "Lokaler Proxy-Port");
+        _installed.Columns.Add("port", "Druckpfad");
 
         _jobs.Columns.Add("id", "Job-ID");
         _jobs.Columns.Add("time", "Zeit");
@@ -226,7 +226,7 @@ public sealed class MainForm : Form
             Dock = DockStyle.Top,
             Height = 48,
             Padding = new Padding(10),
-            Text = "Statuskette: Windows-Warteschlange → lokaler Proxy → Server → Server-Spooler → Druckerstatus."
+            Text = "Tunnel-Jobs: Windows → lokaler Proxy → Server → Server-Spooler. Direkte IPP/WSD-Jobs gehen unmittelbar zum Gerät und erscheinen nicht in dieser Tunnel-Historie."
         };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         buttons.Controls.Add(MakeButton("Aktualisieren", (_, _) => RefreshJobsGrid()));
@@ -444,7 +444,9 @@ public sealed class MainForm : Form
             var row = _available.Rows.Add(
                 installed,
                 printer.DisplayName,
-                printer.DriverName,
+                PrinterTransport.IsDirect(printer.TransportMode)
+                    ? $"{printer.DriverName} · Direkt {printer.TransportMode}"
+                    : printer.DriverName,
                 printer.Status);
 
             _available.Rows[row].Tag =
@@ -457,7 +459,11 @@ public sealed class MainForm : Form
         _installed.Rows.Clear();
         foreach (var m in _config.Mappings)
         {
-            var i = _installed.Rows.Add(m.LocalPrinterName, m.ServerName, m.DriverName, m.LocalProxyPort);
+            var transport = PrinterTransport.IsDirect(m.TransportMode)
+                ? $"Direkt {m.TransportMode}"
+                : m.LocalProxyPort.ToString();
+
+            var i = _installed.Rows.Add(m.LocalPrinterName, m.ServerName, m.DriverName, transport);
             _installed.Rows[i].Tag = m.PortName;
         }
     }
@@ -613,8 +619,26 @@ public sealed class MainForm : Form
 
             foreach (var tag in desired.Values)
             {
-                if (_config.Mappings.Any(m => m.ServerId == preferredId && m.PrinterId == tag.Printer.Id))
-                    continue;
+                var current = _config.Mappings.FirstOrDefault(
+                    m => m.ServerId == preferredId && m.PrinterId == tag.Printer.Id);
+
+                if (current is not null)
+                {
+                    var routeChanged =
+                        !string.Equals(current.TransportMode, tag.Printer.TransportMode, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(current.DirectAddress, tag.Printer.DirectAddress, StringComparison.OrdinalIgnoreCase);
+
+                    var classDriverMismatch =
+                        PrinterTransport.IsClassDriver(tag.Printer.DriverName) &&
+                        !string.Equals(current.DriverName, tag.Printer.DriverName, StringComparison.OrdinalIgnoreCase);
+
+                    if (!routeChanged && !classDriverMismatch)
+                        continue;
+
+                    await PrinterInstaller.RemoveAsync(current);
+                    _config.Mappings.Remove(current);
+                    JsonStore.Save(AppPaths.ClientConfig, _config);
+                }
 
                 await InstallPrinterAsync(tag);
             }
@@ -637,36 +661,83 @@ public sealed class MainForm : Form
 
     private async Task InstallPrinterAsync(AvailableTag tag)
     {
-        var drivers = await PrinterInstaller.GetDriverNamesAsync();
-        if (drivers.Count == 0)
-            throw new InvalidOperationException("Auf diesem PC wurden keine Druckertreiber gefunden.");
+        var direct = PrinterTransport.IsDirect(tag.Printer.TransportMode) &&
+                     !string.IsNullOrWhiteSpace(tag.Printer.DirectAddress);
 
-        var driver = drivers.FirstOrDefault(d => d.Equals(tag.Printer.DriverName, StringComparison.OrdinalIgnoreCase));
-        if (driver is null) driver = ChooseDriver(drivers, tag.Printer.DriverName);
-        if (driver is null) return;
-
-        if (IsGenericClassDriver(driver))
+        if (PrinterTransport.IsMicrosoftIppClassDriver(tag.Printer.DriverName) && !direct)
         {
-            var answer = MessageBox.Show(
-                "Der ausgewählte Treiber ist ein generischer/Class-Treiber:\r\n\r\n" +
-                driver +
-                "\r\n\r\nSolche Treiber erwarten teilweise eine direkte Geräte- oder IPP-Kommunikation. " +
-                "SimplePrint überträgt dagegen den bereits gerenderten RAW-Datenstrom. " +
-                "Dadurch kann die Installation funktionieren, der Ausdruck aber trotzdem scheitern.\r\n\r\n" +
-                "Empfohlen wird ein passender Hersteller-PCL6- oder PostScript-Treiber.\r\n\r\n" +
-                "Trotzdem mit diesem Treiber fortfahren?",
-                "Treiberhinweis",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
-
-            if (answer != DialogResult.Yes)
-                return;
+            throw new InvalidOperationException(
+                $"'{tag.Printer.DisplayName}' verwendet den Microsoft IPP Class Driver, " +
+                "aber der Server konnte keine direkte IPP-/WSD-Geräteadresse ermitteln.\r\n\r\n" +
+                "Die Queue wird nicht mehr über den RAW-Tunnel angelegt, weil dieser Treiber eine echte " +
+                "IPP-/WSD-Gegenstelle erwartet. Bitte die Druckerfreigabe am Server neu speichern oder " +
+                "den Drucker dort mit einer erreichbaren IPP-/WSD-Verbindung installieren.");
         }
 
-        var localPort = AllocatePort();
+        string driver;
+
+        if (direct)
+        {
+            driver = tag.Printer.DriverName;
+        }
+        else
+        {
+            var drivers = await PrinterInstaller.GetDriverNamesAsync();
+            if (drivers.Count == 0)
+                throw new InvalidOperationException("Auf diesem PC wurden keine Druckertreiber gefunden.");
+
+            driver = drivers.FirstOrDefault(
+                         d => d.Equals(tag.Printer.DriverName, StringComparison.OrdinalIgnoreCase))
+                     ?? "";
+
+            if (PrinterTransport.IsClassDriver(tag.Printer.DriverName))
+            {
+                if (string.IsNullOrWhiteSpace(driver))
+                {
+                    SetBusy($"Treiber '{tag.Printer.DriverName}' wird aus dem Windows-Treiberspeicher installiert …");
+
+                    try
+                    {
+                        await PrinterInstaller.EnsureDriverInstalledAsync(tag.Printer.DriverName);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        throw new InvalidOperationException(
+                            $"Für die Class-Driver-Queue '{tag.Printer.DisplayName}' muss auf Client und Server " +
+                            $"exakt derselbe Treiber verwendet werden: '{tag.Printer.DriverName}'.\r\n\r\n" +
+                            "Windows konnte diesen Treiber auf dem Client nicht aus dem lokalen Treiberspeicher installieren. " +
+                            "Ein beliebiger Ersatztreiber wird aus Sicherheitsgründen nicht mehr verwendet.\r\n\r\n" +
+                            ex.Message,
+                            ex);
+                    }
+
+                    drivers = await PrinterInstaller.GetDriverNamesAsync();
+                    driver = drivers.FirstOrDefault(
+                                 d => d.Equals(tag.Printer.DriverName, StringComparison.OrdinalIgnoreCase))
+                             ?? "";
+                }
+
+                if (string.IsNullOrWhiteSpace(driver))
+                {
+                    throw new InvalidOperationException(
+                        $"Der erforderliche Server-Treiber '{tag.Printer.DriverName}' ist auf diesem Client nicht verfügbar. " +
+                        "Für Class-Driver-Drucker lässt SimplePrint keinen abweichenden Ersatztreiber mehr zu.");
+                }
+            }
+            else if (string.IsNullOrWhiteSpace(driver))
+            {
+                driver = ChooseDriver(drivers, tag.Printer.DriverName) ?? "";
+                if (string.IsNullOrWhiteSpace(driver))
+                    return;
+            }
+        }
+
         var shortServer = tag.Server.Announcement.ServerId.ToString("N")[..8];
         var shortPrinter = tag.Printer.Id.ToString("N")[..8];
-        var portName = $"SimplePrint_{shortServer}_{shortPrinter}";
+        var localPort = direct ? 0 : AllocatePort();
+        var portName = direct
+            ? $"SimplePrintDirect_{shortServer}_{shortPrinter}"
+            : $"SimplePrint_{shortServer}_{shortPrinter}";
         var localName = UniqueLocalName($"{tag.Printer.DisplayName} (SimplePrint)");
 
         var mapping = new ClientPrinterMapping
@@ -678,7 +749,10 @@ public sealed class MainForm : Form
             LocalPrinterName = localName,
             DriverName = driver,
             PortName = portName,
-            LocalProxyPort = localPort
+            LocalProxyPort = localPort,
+            TransportMode = direct ? tag.Printer.TransportMode : PrinterTransport.Tunnel,
+            DirectAddress = direct ? tag.Printer.DirectAddress : "",
+            DeviceUuid = direct ? tag.Printer.DeviceUuid : ""
         };
 
         _config.Mappings.Add(mapping);
@@ -686,11 +760,18 @@ public sealed class MainForm : Form
 
         try
         {
-            SetBusy($"Lokaler SimplePrint-Proxy auf Port {localPort} wird gestartet …");
+            if (!direct)
+            {
+                SetBusy($"Lokaler SimplePrint-Proxy auf Port {localPort} wird gestartet …");
 
-            if (!await WaitForLocalProxyAsync(localPort, TimeSpan.FromSeconds(8)))
-                throw new InvalidOperationException(
-                    $"Der SimplePrint Client-Agent lauscht nicht auf 127.0.0.1:{localPort}. Die Windows-Druckerqueue wurde deshalb nicht angelegt.");
+                if (!await WaitForLocalProxyAsync(localPort, TimeSpan.FromSeconds(8)))
+                    throw new InvalidOperationException(
+                        $"Der SimplePrint Client-Agent lauscht nicht auf 127.0.0.1:{localPort}. Die Windows-Druckerqueue wurde deshalb nicht angelegt.");
+            }
+            else
+            {
+                SetBusy($"Direkte {mapping.TransportMode}-Druckerqueue wird eingerichtet …");
+            }
 
             await PrinterInstaller.InstallAsync(mapping);
         }
@@ -728,10 +809,7 @@ public sealed class MainForm : Form
     }
 
     private static bool IsGenericClassDriver(string driver) =>
-        driver.Contains("Class Driver", StringComparison.OrdinalIgnoreCase) ||
-        driver.Contains("Type1 Class", StringComparison.OrdinalIgnoreCase) ||
-        driver.Contains("Type 1 Class", StringComparison.OrdinalIgnoreCase) ||
-        driver.Contains("Microsoft IPP", StringComparison.OrdinalIgnoreCase);
+        PrinterTransport.IsClassDriver(driver);
 
     private string? ChooseDriver(List<string> drivers, string suggested)
     {
@@ -965,9 +1043,11 @@ public sealed class MainForm : Form
                 ? $"Server '{mapping.ServerName}': aktuell nicht per Discovery gefunden"
                 : $"Server '{server.Announcement.ServerName}': {server.Address}:{server.Announcement.GatewayPort} gefunden";
 
-            var gatewayState = "Gateway-Test: nicht möglich";
+            var gatewayState = PrinterTransport.IsDirect(mapping.TransportMode)
+                ? $"Druckpfad: Direkt {mapping.TransportMode} zum Gerät; SimplePrint-Gateway wird für Druckdaten nicht verwendet."
+                : "Gateway-Test: nicht möglich";
 
-            if (server is not null)
+            if (server is not null && !PrinterTransport.IsDirect(mapping.TransportMode))
             {
                 try
                 {

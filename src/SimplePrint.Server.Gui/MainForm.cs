@@ -324,17 +324,70 @@ public sealed class MainForm : Form
         try
         {
             SetBusy("Drucker werden eingelesen …");
-            _localPrinters = await WinPrinterHelper.GetPrintersAsync();
+
+            var allPrinters = await WinPrinterHelper.GetPrintersAsync();
+            var blocked = allPrinters
+                .Where(WinPrinterHelper.IsUnsafeSimplePrintLoop)
+                .ToList();
+
+            _localPrinters = allPrinters
+                .Where(x => !WinPrinterHelper.IsUnsafeSimplePrintLoop(x))
+                .ToList();
+
+            var configChanged = false;
+
+            foreach (var configured in _config.Printers)
+            {
+                var local = allPrinters.FirstOrDefault(
+                    x => x.Name.Equals(configured.QueueName, StringComparison.OrdinalIgnoreCase));
+
+                if (local is null)
+                    continue;
+
+                if (WinPrinterHelper.IsUnsafeSimplePrintLoop(local))
+                {
+                    if (configured.Enabled)
+                    {
+                        configured.Enabled = false;
+                        configChanged = true;
+                    }
+                    continue;
+                }
+
+                if (!string.Equals(configured.DriverName, local.DriverName, StringComparison.Ordinal) ||
+                    !string.Equals(configured.PortName, local.PortName, StringComparison.Ordinal) ||
+                    !string.Equals(configured.TransportMode, local.TransportMode, StringComparison.Ordinal) ||
+                    !string.Equals(configured.DirectAddress, local.DirectAddress, StringComparison.Ordinal) ||
+                    !string.Equals(configured.DeviceUuid, local.DeviceUuid, StringComparison.Ordinal))
+                {
+                    configured.DriverName = local.DriverName;
+                    configured.PortName = local.PortName;
+                    configured.TransportMode = local.TransportMode;
+                    configured.DirectAddress = local.DirectAddress;
+                    configured.DeviceUuid = local.DeviceUuid;
+                    configChanged = true;
+                }
+            }
+
+            if (configChanged)
+                JsonStore.Save(AppPaths.ServerConfig, _config);
+
             _printers.BeginUpdate();
             _printers.Items.Clear();
+
             foreach (var p in _localPrinters.OrderBy(x => x.Name))
             {
                 var choice = new PrinterChoice(p);
                 var index = _printers.Items.Add(choice);
-                var enabled = _config.Printers.Any(x => x.QueueName.Equals(p.Name, StringComparison.OrdinalIgnoreCase) && x.Enabled);
+                var enabled = _config.Printers.Any(
+                    x => x.QueueName.Equals(p.Name, StringComparison.OrdinalIgnoreCase) && x.Enabled);
                 _printers.SetItemChecked(index, enabled);
             }
-            SetStatus($"✓ {_localPrinters.Count} Drucker eingelesen.");
+
+            SetStatus(
+                blocked.Count == 0
+                    ? $"✓ {_localPrinters.Count} Drucker eingelesen."
+                    : $"✓ {_localPrinters.Count} Drucker eingelesen · {blocked.Count} SimplePrint-Schleife(n) blockiert.");
         }
         catch (Exception ex)
         {
@@ -360,6 +413,10 @@ public sealed class MainForm : Form
                 {
                     existing.DisplayName = p.Name;
                     existing.DriverName = p.DriverName;
+                    existing.PortName = p.PortName;
+                    existing.TransportMode = p.TransportMode;
+                    existing.DirectAddress = p.DirectAddress;
+                    existing.DeviceUuid = p.DeviceUuid;
                     existing.Enabled = true;
                     next.Add(existing);
                 }
@@ -370,6 +427,10 @@ public sealed class MainForm : Form
                         QueueName = p.Name,
                         DisplayName = p.Name,
                         DriverName = p.DriverName,
+                        PortName = p.PortName,
+                        TransportMode = p.TransportMode,
+                        DirectAddress = p.DirectAddress,
+                        DeviceUuid = p.DeviceUuid,
                         Enabled = true
                     });
                 }

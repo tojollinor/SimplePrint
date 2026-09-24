@@ -8,8 +8,58 @@ internal static class WinPrinterHelper
 {
     public static async Task<List<LocalPrinterInfo>> GetPrintersAsync()
     {
-        const string script =
-            "ConvertTo-Json -InputObject @(Get-Printer | Select-Object Name,DriverName,PortName,@{Name='PrinterStatus';Expression={$_.PrinterStatus.ToString()}}) -Compress";
+        const string script = """
+$items = @(Get-Printer | ForEach-Object {
+  $p = $_
+  $port = Get-PrinterPort -Name $p.PortName -ErrorAction SilentlyContinue
+
+  $deviceUrl = ''
+  $deviceUuid = ''
+  $hostAddress = ''
+  $portNumber = $null
+
+  if($port) {
+    if($port.PSObject.Properties['DeviceURL']) { $deviceUrl = [string]$port.DeviceURL }
+    if($port.PSObject.Properties['DeviceUUID']) { $deviceUuid = [string]$port.DeviceUUID }
+    if($port.PSObject.Properties['PrinterHostAddress']) { $hostAddress = [string]$port.PrinterHostAddress }
+    if($port.PSObject.Properties['PortNumber'] -and $port.PortNumber) { $portNumber = [int]$port.PortNumber }
+  }
+
+  $transportMode = 'Tunnel'
+  $directAddress = ''
+
+  if([string]$p.DriverName -match 'Microsoft IPP Class Driver') {
+    if(-not [string]::IsNullOrWhiteSpace($deviceUrl)) {
+      $directAddress = $deviceUrl
+      if(([string]$p.PortName).StartsWith('WSD-',[System.StringComparison]::OrdinalIgnoreCase)) {
+        $transportMode = 'Wsd'
+      } else {
+        # IPP directed discovery may expose http/https as well as ipp/ipps URLs.
+        $transportMode = 'Ipp'
+      }
+    }
+    elseif(-not [string]::IsNullOrWhiteSpace($hostAddress) -and
+           $hostAddress -notin @('127.0.0.1','::1','localhost')) {
+      $directAddress = $hostAddress
+      $transportMode = 'Ipp'
+    }
+  }
+
+  [pscustomobject]@{
+    Name = [string]$p.Name
+    DriverName = [string]$p.DriverName
+    PortName = [string]$p.PortName
+    PrinterStatus = [string]$p.PrinterStatus
+    TransportMode = $transportMode
+    DirectAddress = $directAddress
+    DeviceUuid = $deviceUuid
+    PrinterHostAddress = $hostAddress
+    PortNumber = $portNumber
+  }
+})
+
+ConvertTo-Json -InputObject $items -Compress
+""";
 
         var r = await PowerShellRunner.RunAsync(script);
         if (r.ExitCode != 0) throw new InvalidOperationException(r.StdErr);
@@ -19,6 +69,10 @@ internal static class WinPrinterHelper
                    JsonStore.Options)
                ?? [];
     }
+
+    public static bool IsUnsafeSimplePrintLoop(LocalPrinterInfo printer) =>
+        PrinterTransport.IsSimplePrintPort(printer.PortName) ||
+        PrinterTransport.IsLoopbackProxy(printer.PrinterHostAddress, printer.PortNumber);
 
     public static async Task<(FirewallRuleStatus Discovery, FirewallRuleStatus Gateway)> GetFirewallStateAsync()
     {
@@ -207,7 +261,7 @@ Get-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4
 '=== PRINTERS ==='
 Get-Printer | Format-Table Name,DriverName,PortName,PrinterStatus,JobCount -AutoSize | Out-String
 '=== PRINTER PORTS ==='
-Get-PrinterPort | Format-Table Name,PrinterHostAddress,PortNumber,SNMPEnabled,SNMPCommunity -AutoSize | Out-String
+Get-PrinterPort | Select-Object Name,PrinterHostAddress,PortNumber,DeviceURL,DeviceUUID,SNMPEnabled,SNMPCommunity | Format-Table -AutoSize | Out-String
 '=== FIREWALL RULES ==='
 Get-NetFirewallRule -DisplayName 'SimplePrint*' -ErrorAction SilentlyContinue | Select-Object Name,DisplayName,Enabled,Profile,Direction,Action | Format-Table -AutoSize | Out-String
 '=== FIREWALL PORT FILTERS ==='

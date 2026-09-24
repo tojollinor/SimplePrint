@@ -19,8 +19,54 @@ internal static class PrinterInstaller
         return JsonSerializer.Deserialize<List<string>>(r.StdOut, JsonStore.Options) ?? [];
     }
 
+    public static async Task<bool> EnsureDriverInstalledAsync(string driverName)
+    {
+        var installed = await GetDriverNamesAsync();
+        if (installed.Any(x => x.Equals(driverName, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        var script = $@"
+$driver={PowerShellRunner.Quote(driverName)}
+Add-PrinterDriver -Name $driver -ErrorAction Stop
+";
+
+        await PrivilegeHelper.RunPowerShellElevatedAsync(script);
+
+        installed = await GetDriverNamesAsync();
+        return installed.Any(x => x.Equals(driverName, StringComparison.OrdinalIgnoreCase));
+    }
+
     public static Task InstallAsync(ClientPrinterMapping mapping)
     {
+        if (PrinterTransport.IsDirect(mapping.TransportMode))
+        {
+            var directScript = $@"
+$printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+$address={PowerShellRunner.Quote(mapping.DirectAddress)}
+$tag={PowerShellRunner.Quote($"SimplePrint:{mapping.ServerId:N}:{mapping.PrinterId:N}")}
+
+if([string]::IsNullOrWhiteSpace($address)) {{
+  throw 'Für den Direktdruck wurde keine Geräteadresse übermittelt.'
+}}
+
+$existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+if($existing) {{
+  throw ('Der Drucker ' + $printer + ' existiert bereits. Er wird aus Sicherheitsgründen nicht verändert.')
+}}
+
+if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison.OrdinalIgnoreCase) ? "$true" : "$false")}) {{
+  Add-Printer -Name $printer -IppURL $address -Comment $tag -ErrorAction Stop
+}} else {{
+  Add-Printer -Name $printer -DeviceURL $address -Comment $tag -ErrorAction Stop
+}}
+
+if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{
+  throw 'Windows hat die direkte Druckerqueue nicht angelegt.'
+}}
+";
+            return PrivilegeHelper.RunPowerShellElevatedAsync(directScript);
+        }
+
         var script = $@"
 $port={PowerShellRunner.Quote(mapping.PortName)}
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
@@ -46,6 +92,23 @@ if($existing) {{
 
     public static Task RemoveAsync(ClientPrinterMapping mapping)
     {
+        if (PrinterTransport.IsDirect(mapping.TransportMode))
+        {
+            var tag = $"SimplePrint:{mapping.ServerId:N}:{mapping.PrinterId:N}";
+            var directScript = $@"
+$printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+$tag={PowerShellRunner.Quote(tag)}
+$existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+if($existing) {{
+  if([string]$existing.Comment -ne $tag) {{
+    throw ('Der direkte Drucker ' + $printer + ' trägt nicht die erwartete SimplePrint-Kennung. Er wird aus Sicherheitsgründen nicht gelöscht.')
+  }}
+  Remove-Printer -Name $printer -ErrorAction Stop
+}}
+";
+            return PrivilegeHelper.RunPowerShellElevatedAsync(directScript);
+        }
+
         var script = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $port={PowerShellRunner.Quote(mapping.PortName)}
@@ -80,6 +143,39 @@ if($portObject) {{
     public static async Task<LocalPrinterReadiness> GetLocalReadinessAsync(
         ClientPrinterMapping mapping)
     {
+        if (PrinterTransport.IsDirect(mapping.TransportMode))
+        {
+            var directScript = $@"
+$printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+$p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+$problems = @()
+if(-not $p) {{ $problems += 'Direkte Windows-Druckerqueue fehlt.' }}
+
+[pscustomobject]@{{
+  Ready = ($problems.Count -eq 0)
+  Detail = 'Modus={mapping.TransportMode}; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
+           '; Ziel={mapping.DirectAddress}'
+  Warnings = @($problems)
+}} | ConvertTo-Json -Compress
+";
+
+            var directResult = await PowerShellRunner.RunAsync(directScript);
+            if (directResult.ExitCode != 0)
+                throw new InvalidOperationException(
+                    string.IsNullOrWhiteSpace(directResult.StdErr)
+                        ? "Direkte Druckbereitschaft konnte nicht geprüft werden."
+                        : directResult.StdErr.Trim());
+
+            return JsonSerializer.Deserialize<LocalPrinterReadiness>(
+                       directResult.StdOut,
+                       JsonStore.Options)
+                   ?? new LocalPrinterReadiness
+                   {
+                       Ready = false,
+                       Detail = "Keine lokalen Statusdaten erhalten."
+                   };
+        }
+
         var script = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $port={PowerShellRunner.Quote(mapping.PortName)}
@@ -101,7 +197,7 @@ if(-not $pp) {{ $problems += 'SimplePrint-Druckerport fehlt.' }}
 if(-not $listen) {{ $problems += 'Lokaler SimplePrint-Proxy lauscht nicht auf Port ' + $proxyPort + '.' }}
 
 if($p -and ([string]$p.DriverName -match 'Class Driver|Type1 Class|Type 1 Class|Microsoft IPP')) {{
-  $warnings += 'Generischer/Class-Treiber erkannt. Hersteller-PCL6/PS wird für RAW-Druck empfohlen.'
+  $warnings += 'Class-Treiber erkannt. Für den Tunnel muss exakt derselbe Treiber wie am Server verwendet werden.'
 }}
 
 [pscustomobject]@{{
@@ -133,6 +229,29 @@ if($p -and ([string]$p.DriverName -match 'Class Driver|Type1 Class|Type 1 Class|
 
     public static async Task<string> GetQuickDiagnosisAsync(ClientPrinterMapping mapping)
     {
+        if (PrinterTransport.IsDirect(mapping.TransportMode))
+        {
+            var directScript = $@"
+$ErrorActionPreference='Continue'
+$printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+
+'=== DIREKTDRUCK ==='
+'Modus: {mapping.TransportMode}'
+'Ziel: {mapping.DirectAddress}'
+$p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+if($p) {{
+  'Queue: ' + $p.Name
+  'Treiber: ' + $p.DriverName
+  'Port: ' + $p.PortName
+  'Status: ' + $p.PrinterStatus
+}} else {{
+  'Queue: NICHT GEFUNDEN'
+}}
+";
+            var directResult = await PowerShellRunner.RunAsync(directScript);
+            return directResult.StdOut + Environment.NewLine + directResult.StdErr;
+        }
+
         var script = $@"
 $ErrorActionPreference='Continue'
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
@@ -149,7 +268,7 @@ if($p) {{
   'Queue: ' + $p.Name
   'Treiber: ' + $p.DriverName
   if([string]$p.DriverName -match 'Class Driver|Type1 Class|Type 1 Class|Microsoft IPP') {{
-    'WARNUNG: Generischer/Class-Treiber erkannt. Für SimplePrint RAW wird ein Hersteller-PCL6/PS-Treiber empfohlen.'
+    'HINWEIS: Class-Treiber erkannt. Für den Tunnel muss exakt derselbe Treiber wie am Server verwendet werden.'
   }}
   'Port: ' + $p.PortName
   'Status: ' + $p.PrinterStatus

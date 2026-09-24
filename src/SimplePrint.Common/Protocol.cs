@@ -6,7 +6,7 @@ namespace SimplePrint.Common;
 
 public static class Protocol
 {
-    public const int Version = 3;
+    public const int Version = 4;
     public const int DefaultDiscoveryPort = 45880;
     public const int DefaultGatewayPort = 45881;
     public const string DiscoveryRequestMagic = "SPRDISC1";
@@ -14,7 +14,7 @@ public static class Protocol
     public const string ClientHeartbeatMagic = "SPRCLT1";
     public const int GatewayHeaderLength = 40;
 
-    private static readonly byte[] GatewayMagic = Encoding.ASCII.GetBytes("SPR3");
+    private static readonly byte[] GatewayMagic = Encoding.ASCII.GetBytes("SPR4");
 
     public static byte[] DiscoveryRequestBytes => Encoding.ASCII.GetBytes(DiscoveryRequestMagic);
 
