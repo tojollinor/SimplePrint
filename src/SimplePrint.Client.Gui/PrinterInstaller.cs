@@ -156,14 +156,24 @@ if($portObject) {{
         {
             var directScript = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+$address={PowerShellRunner.Quote(mapping.DirectAddress)}
+$deviceUuid={PowerShellRunner.Quote(mapping.DeviceUuid)}
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 $problems = @()
 if(-not $p) {{ $problems += 'Direkte Windows-Druckerqueue fehlt.' }}
 
+$target = if(-not [string]::IsNullOrWhiteSpace($address)) {{
+  $address
+}} elseif(-not [string]::IsNullOrWhiteSpace($deviceUuid)) {{
+  'UUID ' + $deviceUuid
+}} else {{
+  'nicht verfügbar'
+}}
+
 [pscustomobject]@{{
   Ready = ($problems.Count -eq 0)
   Detail = 'Modus={mapping.TransportMode}; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
-           '; Ziel=' + $(if(-not [string]::IsNullOrWhiteSpace('{mapping.DirectAddress}')){{'{mapping.DirectAddress}'}}else{{'UUID {mapping.DeviceUuid}'}})
+           '; Ziel=' + $target
   Problems = @($problems)
   Warnings = @($problems)
 }} | ConvertTo-Json -Compress
@@ -248,7 +258,7 @@ $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 
 '=== DIREKTDRUCK ==='
 'Modus: {mapping.TransportMode}'
-'Ziel: {mapping.DirectAddress}'
+'Ziel: ' + $(if(-not [string]::IsNullOrWhiteSpace({PowerShellRunner.Quote(mapping.DirectAddress)})){{{PowerShellRunner.Quote(mapping.DirectAddress)}}}else{{'UUID ' + {PowerShellRunner.Quote(mapping.DeviceUuid)}}})
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 if($p) {{
   'Queue: ' + $p.Name
