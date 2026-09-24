@@ -7,6 +7,7 @@ internal sealed class LocalPrinterReadiness
 {
     public bool Ready { get; set; }
     public string Detail { get; set; } = "";
+    public List<string> Problems { get; set; } = [];
     public List<string> Warnings { get; set; } = [];
 }
 
@@ -155,6 +156,7 @@ if(-not $p) {{ $problems += 'Direkte Windows-Druckerqueue fehlt.' }}
   Ready = ($problems.Count -eq 0)
   Detail = 'Modus={mapping.TransportMode}; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
            '; Ziel={mapping.DirectAddress}'
+  Problems = @($problems)
   Warnings = @($problems)
 }} | ConvertTo-Json -Compress
 ";
@@ -206,6 +208,7 @@ if($p -and ([string]$p.DriverName -match 'Class Driver|Type1 Class|Type 1 Class|
            '; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
            '; Port=' + $(if($pp){{'vorhanden'}}else{{'fehlt'}}) +
            '; Proxy=' + $(if($listen){{'lauscht'}}else{{'nicht aktiv'}})
+  Problems = @($problems)
   Warnings = @($problems + $warnings)
 }} | ConvertTo-Json -Compress
 ";
