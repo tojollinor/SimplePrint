@@ -804,6 +804,7 @@ public sealed class MainForm : Form
                 tag.Printer.TransportMode,
                 tag.Printer.DirectAddress,
                 tag.Printer.DeviceUuid,
+                tag.Printer.PortName,
                 tag.Printer.DisplayName);
         }
 
