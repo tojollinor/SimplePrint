@@ -594,11 +594,16 @@ public sealed class MainForm : Form
         _installed.Rows.Clear();
         foreach (var m in _config.Mappings)
         {
-            var transport = PrinterTransport.IsDirect(m.TransportMode)
-                ? (m.UseExistingQueue
-                    ? $"Direkt {m.TransportMode} · vorhandene Queue"
-                    : $"Direkt {m.TransportMode} · SimplePrint-Queue")
-                : m.LocalProxyPort.ToString();
+            var transport = string.Equals(
+                    m.TransportMode,
+                    PrinterTransport.WindowsShare,
+                    StringComparison.OrdinalIgnoreCase)
+                ? "Über Serverfreigabe"
+                : PrinterTransport.IsDirect(m.TransportMode)
+                    ? (m.UseExistingQueue
+                        ? $"Direkt {m.TransportMode} · vorhandene Queue"
+                        : $"Direkt {m.TransportMode} · SimplePrint-Queue")
+                    : m.LocalProxyPort.ToString();
 
             var i = _installed.Rows.Add(m.LocalPrinterName, m.ServerName, m.DriverName, transport);
             _installed.Rows[i].Tag = m.PortName;
@@ -761,10 +766,28 @@ public sealed class MainForm : Form
 
                 if (current is not null)
                 {
+                    var shareFallbackMatches =
+                        string.Equals(
+                            current.TransportMode,
+                            PrinterTransport.WindowsShare,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        PrinterTransport.IsDeviceDirect(tag.Printer.TransportMode) &&
+                        string.Equals(
+                            current.DirectAddress,
+                            PrinterTransport.GetWindowsSharePath(
+                                tag.Server.Address.ToString(),
+                                tag.Printer.Id),
+                            StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(
+                            current.DeviceUuid,
+                            tag.Printer.DeviceUuid,
+                            StringComparison.OrdinalIgnoreCase);
+
                     var routeChanged =
-                        !string.Equals(current.TransportMode, tag.Printer.TransportMode, StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(current.DirectAddress, tag.Printer.DirectAddress, StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(current.DeviceUuid, tag.Printer.DeviceUuid, StringComparison.OrdinalIgnoreCase);
+                        !shareFallbackMatches &&
+                        (!string.Equals(current.TransportMode, tag.Printer.TransportMode, StringComparison.OrdinalIgnoreCase) ||
+                         !string.Equals(current.DirectAddress, tag.Printer.DirectAddress, StringComparison.OrdinalIgnoreCase) ||
+                         !string.Equals(current.DeviceUuid, tag.Printer.DeviceUuid, StringComparison.OrdinalIgnoreCase));
 
                     var classDriverMismatch =
                         !PrinterTransport.IsDirect(tag.Printer.TransportMode) &&
@@ -936,7 +959,54 @@ public sealed class MainForm : Form
                 SetBusy($"Direkte {mapping.TransportMode}-Druckerqueue wird eingerichtet …");
             }
 
-            await PrinterInstaller.InstallAsync(mapping);
+            try
+            {
+                await PrinterInstaller.InstallAsync(mapping);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception directError)
+                when (direct &&
+                      !mapping.UseExistingQueue &&
+                      PrinterTransport.IsDeviceDirect(mapping.TransportMode))
+            {
+                var originalMode = mapping.TransportMode;
+                var sharePath = PrinterTransport.GetWindowsSharePath(
+                    tag.Server.Address.ToString(),
+                    tag.Printer.Id);
+
+                SetBusy(
+                    $"Direkte {originalMode}-Erkennung nicht möglich. " +
+                    "Windows-Serverfreigabe wird als Fallback verbunden …");
+
+                mapping.TransportMode = PrinterTransport.WindowsShare;
+                mapping.DirectAddress = sharePath;
+                mapping.LocalPrinterName = sharePath;
+                mapping.PortName = sharePath;
+                mapping.LocalProxyPort = 0;
+                mapping.UseExistingQueue = false;
+                JsonStore.Save(AppPaths.ClientConfig, _config);
+
+                try
+                {
+                    await PrinterInstaller.InstallAsync(mapping);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception shareError)
+                {
+                    throw new InvalidOperationException(
+                        $"Der Drucker konnte weder direkt per {originalMode} noch über die " +
+                        $"SimplePrint-Serverfreigabe verbunden werden.\r\n\r\n" +
+                        $"Direkte Verbindung: {directError.Message}\r\n\r\n" +
+                        $"Serverfreigabe {sharePath}: {shareError.Message}",
+                        shareError);
+                }
+            }
         }
         catch
         {
