@@ -308,7 +308,7 @@ public sealed class MainForm : Form
             Dock = DockStyle.Top,
             Height = 56,
             Padding = new Padding(10),
-            Text = "Der Server benötigt genau zwei eingehende Regeln. Änderungen werden nur nach einer UAC-Freigabe ausgeführt."
+            Text = "Der SimplePrint-Kerndienst benötigt zwei eingehende Regeln. Für WSD/IPP-Fallbacks verwaltet der Serverdienst zusätzlich lokale Windows-Druckfreigaben und deren Firewallregeln automatisch."
         };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         buttons.Controls.Add(MakeButton("Firewall-Regeln anwenden", async (_, _) => await ApplyFirewallAsync()));
