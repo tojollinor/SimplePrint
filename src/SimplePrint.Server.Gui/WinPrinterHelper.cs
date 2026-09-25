@@ -31,7 +31,7 @@ function Resolve-SimplePrintIppAddressFromUuid([string]$uuid) {
   if($hex.Length -lt 12) { return '' }
 
   $macHex = $hex.Substring($hex.Length - 12)
-  $mac = (($macHex -split '(.{2})' | Where-Object { $_ }) -join '-').ToUpperInvariant()
+  $mac = ((0..5 | ForEach-Object { $macHex.Substring($_ * 2,2) }) -join '-').ToUpperInvariant()
 
   $neighbors = @(
     Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue |
