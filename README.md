@@ -1,8 +1,8 @@
-# SimplePrint 0.2.9
+# SimplePrint 0.2.10
 
 Kleiner Windows-Druckserver mit zwei Druckpfaden: **RAW-Tunnel für klassische/lokale Treiber** und **direkte IPP-/WSD-Anbindung für Microsoft IPP Class Driver**, plus Diagnose.
 
-Bei Tunnel-Druckern rendert der Client mit exakt dem passenden Treiber und SimplePrint überträgt den fertigen Datenstrom zum Server. Bei Microsoft-IPP/WSD-Druckern installiert SimplePrint dagegen eine echte direkte Windows-Geräteverbindung, damit IPP-Fähigkeiten und Statusabfragen nicht durch einen RAW-Proxy verloren gehen.
+Bei Tunnel-Druckern rendert der Client mit exakt dem passenden Treiber und SimplePrint überträgt den fertigen Datenstrom zum Server. Bei Microsoft-IPP/WSD-Druckern versucht SimplePrint zunächst eine echte direkte Windows-Geräteverbindung. Kann der Client das WSD-/IPP-Gerät selbst nicht entdecken, verbindet er automatisch eine vom SimplePrint-Server bereitgestellte Windows-Druckerfreigabe. Dadurch bleibt die physische WSD-/IPP-Verbindung ausschließlich auf dem Server.
 
 ## Enthalten
 
@@ -34,13 +34,13 @@ USB-/lokaler Drucker
 
 ## Installation aus fertigem Setup
 
-1. Auf dem Druckserver `SimplePrint-Server-Setup-0.2.9.exe` installieren.
+1. Auf dem Druckserver `SimplePrint-Server-Setup-0.2.10.exe` installieren.
 2. `SimplePrint Server` öffnen und die gewünschten lokalen Drucker freigeben.
-3. Auf jedem Windows-10/11-Client `SimplePrint-Client-Setup-0.2.9.exe` installieren.
+3. Auf jedem Windows-10/11-Client `SimplePrint-Client-Setup-0.2.10.exe` installieren.
 4. `SimplePrint Client` öffnen. Der Server sollte automatisch erscheinen.
 5. Drucker über die Checkbox auswählen und die Druckerauswahl speichern.
 6. Bei Class-Driver-Tunnelqueues installiert/verwendet SimplePrint ausschließlich den **exakt gleichen Treiber wie auf dem Server**. Ein beliebiger Ersatztreiber wird nicht mehr akzeptiert.
-7. Microsoft-IPP/WSD-Freigaben werden als **direkte IPP-/WSD-Queue** verwendet. Existiert lokal bereits eine Queue für exakt dieselbe WSD-DeviceUUID bzw. IPP-Geräteadresse, übernimmt SimplePrint diese Queue schreibgeschützt statt eine zweite anzulegen. Bei WSD liest SimplePrint ab 0.2.8 die Geräte-UUID zusätzlich aus dem Registry-Zweig des Windows-WSD-Portmonitors, wenn `Get-PrinterPort` weder `DeviceURL` noch `DeviceUUID` liefert. Beim Anlegen probiert der Client sowohl `urn:uuid:…` als auch die reine GUID-Schreibweise.
+7. Microsoft-IPP/WSD-Freigaben werden bevorzugt als **direkte IPP-/WSD-Queue** verwendet. Existiert lokal bereits eine Queue für exakt dieselbe WSD-DeviceUUID bzw. IPP-Geräteadresse, übernimmt SimplePrint diese Queue schreibgeschützt statt eine zweite anzulegen. Kann Windows den WSD-Drucker auf dem Client trotz UUID und Gerätescan nicht finden, verwendet 0.2.10 automatisch die lokale Windows-Druckerfreigabe des SimplePrint-Servers (`SimplePrint-<Drucker-ID>`). Der Server richtet diese Freigabe sowie die dafür auf Privat/Domäne und LocalSubnet beschränkten Firewallregeln selbst ein.
 8. Mit **Testseite** den vollständigen Weg prüfen.
 
 ## Automatische Updates ab 0.2.3
@@ -68,8 +68,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 Die veröffentlichten Programme landen in `dist\`. Wenn Inno Setup vorhanden ist, entsteht zusätzlich:
 
 ```text
-dist\Installer\SimplePrint-Server-Setup-0.2.9.exe
-dist\Installer\SimplePrint-Client-Setup-0.2.9.exe
+dist\Installer\SimplePrint-Server-Setup-0.2.10.exe
+dist\Installer\SimplePrint-Client-Setup-0.2.10.exe
 ```
 
 ## Diagnose
@@ -96,7 +96,7 @@ Beim Brother DCP-L2510D muss der Client bei einer Class-Driver-Freigabe **densel
 
 ## Stand
 
-Die aktuelle Entwicklungsfassung ist `0.2.9`. Der WSD-Clientpfad stößt vor dem Anlegen einer Queue die Windows-Geräteerkennung erneut an, prüft bereits bekannte WSD-Ports anhand der DeviceUUID und versucht die Installation anschließend erneut. Dadurch werden insbesondere Fälle abgefangen, in denen der Server eine gültige WSD-UUID kennt, der Client den Drucker aber noch nicht lokal aufgelöst hat. Die Clientdiagnose enthält dafür jetzt alle Drucker, Ports und den WSD-Port-Registryzweig. Passende bereits installierte WSD-/IPP-Queues werden weiterhin anhand der Geräteidentität übernommen, statt eine zweite Windows-Queue anzulegen. Übernommene Queues werden weder verändert noch bei Abwahl, Migration oder Deinstallation gelöscht. Sie behebt die Migration alter Tunnel-Zuordnungen auf direkte WSD-/IPP-Routen, ohne bereits vorhandene physische Windows-Druckerqueues zu löschen. Außerdem zeigt die Client-Bereitschaft die Queue-Zuordnung jetzt ausdrücklich als korrekt/falsch an. Sie ergänzt den Registry-Fallback für WSD-Geräte-UUIDs, den vollständigen Server+Client-Diagnoseabruf, den Umzug der Diagnosefunktionen nach **Allgemein** sowie **Nach Updates suchen** im Tray-Kontextmenü von Server und Client. Sie ergänzt direkten IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung und einen harten Schutz gegen rekursive SimplePrint-Druckschleifen. Enthalten ist außerdem die End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
+Die aktuelle Entwicklungsfassung ist `0.2.10`. Wenn ein WSD-/IPP-Drucker auf dem Client nicht direkt sichtbar ist, fällt SimplePrint nun automatisch auf eine serverseitige Windows-Druckerfreigabe zurück. Der Server richtet dafür eine kontrollierte Freigabe pro direkter Druckerqueue und LocalSubnet-beschränkte SMB/RPC-Firewallregeln ein; bei Abwahl oder Deinstallation werden die SimplePrint-Freigaben wieder bereinigt. Der WSD-Clientpfad stößt weiterhin vor dem Anlegen einer Queue die Windows-Geräteerkennung erneut an, prüft bereits bekannte WSD-Ports anhand der DeviceUUID und versucht die Installation anschließend erneut. Dadurch werden insbesondere Fälle abgefangen, in denen der Server eine gültige WSD-UUID kennt, der Client den Drucker aber noch nicht lokal aufgelöst hat. Die Clientdiagnose enthält dafür jetzt alle Drucker, Ports und den WSD-Port-Registryzweig. Passende bereits installierte WSD-/IPP-Queues werden weiterhin anhand der Geräteidentität übernommen, statt eine zweite Windows-Queue anzulegen. Übernommene Queues werden weder verändert noch bei Abwahl, Migration oder Deinstallation gelöscht. Sie behebt die Migration alter Tunnel-Zuordnungen auf direkte WSD-/IPP-Routen, ohne bereits vorhandene physische Windows-Druckerqueues zu löschen. Außerdem zeigt die Client-Bereitschaft die Queue-Zuordnung jetzt ausdrücklich als korrekt/falsch an. Sie ergänzt den Registry-Fallback für WSD-Geräte-UUIDs, den vollständigen Server+Client-Diagnoseabruf, den Umzug der Diagnosefunktionen nach **Allgemein** sowie **Nach Updates suchen** im Tray-Kontextmenü von Server und Client. Sie ergänzt direkten IPP-/WSD-Druck für Microsoft IPP Class Driver, exakte Class-Driver-Zuordnung und einen harten Schutz gegen rekursive SimplePrint-Druckschleifen. Enthalten ist außerdem die End-to-End-Druckbereitschaftsprüfung mit Client-, Server-, Windows-Spooler- und Gerätestatus. Netzwerkdrucker können zusätzlich über SNMP v1 und die standardisierte Printer-MIB abgefragt werden. Soweit vom Gerät unterstützt, zeigt SimplePrint unter anderem Leerlauf/Druckt, Papier- und Tonerwarnungen sowie Verbrauchsmaterialstände an.
 
 Zusätzlich enthalten sind ein vollständig stiller Updateablauf nach einmaliger UAC-Freigabe mit Download- und Installationsanzeige, automatischem Neustart samt Erfolgsmeldung, ein fensterloser GUI-Autostart direkt in den Infobereich, Versions-/Protokollkompatibilität, verifizierte Firewallregeln, Serverdienst-Neustart, Warteschlangenaufruf, Offline-Clientverwaltung, Druckauftrags-Historienverwaltung, erweiterte Diagnosepakete, generische Class-Driver-Warnungen und Ampelstatus im Tray. Ab 0.2.3 wird die Checkbox per exakter Trefferprüfung behandelt: Ein Klick auf Druckername oder übrige Zeile markiert nur den Drucker; ausschließlich ein Klick direkt auf das Checkbox-Symbol setzt oder entfernt den Haken. Ab 0.2.8 zeigt die Druckbereitschaft konkrete Fehlerursachen statt Sammelmeldungen. Erfolgreiche Prüfungen erhalten ein grünes ✓, echte Fehler ein rotes ✗; bei nicht verfügbaren oder nicht geprüften Werten wird bewusst kein Symbol angezeigt. Windows-Queue-Status wie `NoToner` werden ebenfalls ausgewertet, sodass z. B. ausdrücklich **„Verbindung zum Drucker vorhanden, aber Toner leer.“** gemeldet wird. Herausgeber-Metadaten verweisen auf `tojollinor` bzw. das GitHub-Repository.
 
