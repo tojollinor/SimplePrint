@@ -25,13 +25,12 @@ $items = @(Get-Printer | ForEach-Object {
     if($port.PSObject.Properties['PortNumber'] -and $port.PortNumber) { $portNumber = [int]$port.PortNumber }
   }
 
-  # Get-PrinterPort leaves DeviceURL/DeviceUUID empty on a number of real WSD
-  # installations. The WSD port monitor keeps the actual printer UUID in its
-  # per-port registry key, so use that as the authoritative fallback.
   $isWsdPort = ([string]$p.PortName).StartsWith('WSD-',[System.StringComparison]::OrdinalIgnoreCase)
+
   if($isWsdPort -and
      ([string]::IsNullOrWhiteSpace($deviceUrl) -or [string]::IsNullOrWhiteSpace($deviceUuid))) {
     $wsdKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\WSD Port\Ports\' + [string]$p.PortName
+
     if(Test-Path -LiteralPath $wsdKey) {
       $wsd = Get-ItemProperty -LiteralPath $wsdKey -ErrorAction SilentlyContinue
 
