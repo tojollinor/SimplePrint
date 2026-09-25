@@ -294,7 +294,7 @@ Get-Service -Name Spooler -ErrorAction SilentlyContinue | Format-List * | Out-St
 '=== NETWORK PROFILE ==='
 Get-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4Connectivity -AutoSize | Out-String
 '=== PRINTERS ==='
-Get-Printer | Format-Table Name,DriverName,PortName,PrinterStatus,JobCount -AutoSize | Out-String
+Get-Printer | Format-Table Name,DriverName,PortName,PrinterStatus,JobCount,Shared,ShareName -AutoSize | Out-String
 '=== PRINTER PORTS ==='
 Get-PrinterPort | Select-Object Name,PrinterHostAddress,PortNumber,DeviceURL,DeviceUUID,SNMPEnabled,SNMPCommunity | Format-Table -AutoSize | Out-String
 '=== WSD PORT REGISTRY ==='
