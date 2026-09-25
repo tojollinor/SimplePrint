@@ -44,11 +44,8 @@ Add-PrinterDriver -Name $driver -ErrorAction Stop
             var directScript = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $address={PowerShellRunner.Quote(mapping.DirectAddress)}
+$deviceUuid={PowerShellRunner.Quote(mapping.DeviceUuid)}
 $tag={PowerShellRunner.Quote($"SimplePrint:{mapping.ServerId:N}:{mapping.PrinterId:N}")}
-
-if([string]::IsNullOrWhiteSpace($address)) {{
-  throw 'Für den Direktdruck wurde keine Geräteadresse übermittelt.'
-}}
 
 $existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 if($existing) {{
@@ -56,9 +53,30 @@ if($existing) {{
 }}
 
 if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison.OrdinalIgnoreCase) ? "$true" : "$false")}) {{
+  if([string]::IsNullOrWhiteSpace($address)) {{
+    throw 'Für den direkten IPP-Druck wurde keine Geräteadresse übermittelt.'
+  }}
   Add-Printer -Name $printer -IppURL $address -Comment $tag -ErrorAction Stop
 }} else {{
-  Add-Printer -Name $printer -DeviceURL $address -Comment $tag -ErrorAction Stop
+  if(-not [string]::IsNullOrWhiteSpace($address)) {{
+    Add-Printer -Name $printer -DeviceURL $address -Comment $tag -ErrorAction Stop
+  }}
+  elseif(-not [string]::IsNullOrWhiteSpace($deviceUuid)) {{
+    $uuidText = $deviceUuid.Trim()
+    if($uuidText.StartsWith('urn:uuid:', [System.StringComparison]::OrdinalIgnoreCase)) {{
+      $uuidText = $uuidText.Substring(9)
+    }}
+
+    $uuidGuid = [Guid]::Empty
+    if(-not [Guid]::TryParse($uuidText, [ref]$uuidGuid)) {{
+      throw ('Die vom Server gelieferte WSD-DeviceUUID ist ungültig: ' + $deviceUuid)
+    }}
+
+    Add-Printer -Name $printer -DeviceUUID $uuidGuid -Comment $tag -ErrorAction Stop
+  }}
+  else {{
+    throw 'Für den direkten WSD-Druck wurden weder DeviceURL noch DeviceUUID übermittelt.'
+  }}
 }}
 
 if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{
@@ -148,14 +166,24 @@ if($portObject) {{
         {
             var directScript = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+$address={PowerShellRunner.Quote(mapping.DirectAddress)}
+$deviceUuid={PowerShellRunner.Quote(mapping.DeviceUuid)}
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 $problems = @()
 if(-not $p) {{ $problems += 'Direkte Windows-Druckerqueue fehlt.' }}
 
+$target = if(-not [string]::IsNullOrWhiteSpace($address)) {{
+  $address
+}} elseif(-not [string]::IsNullOrWhiteSpace($deviceUuid)) {{
+  'UUID ' + $deviceUuid
+}} else {{
+  'nicht verfügbar'
+}}
+
 [pscustomobject]@{{
   Ready = ($problems.Count -eq 0)
   Detail = 'Modus={mapping.TransportMode}; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
-           '; Ziel={mapping.DirectAddress}'
+           '; Ziel=' + $target
   Problems = @($problems)
   Warnings = @($problems)
 }} | ConvertTo-Json -Compress
@@ -240,7 +268,7 @@ $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 
 '=== DIREKTDRUCK ==='
 'Modus: {mapping.TransportMode}'
-'Ziel: {mapping.DirectAddress}'
+'Ziel: ' + $(if(-not [string]::IsNullOrWhiteSpace({PowerShellRunner.Quote(mapping.DirectAddress)})){{{PowerShellRunner.Quote(mapping.DirectAddress)}}}else{{'UUID ' + {PowerShellRunner.Quote(mapping.DeviceUuid)}}})
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 if($p) {{
   'Queue: ' + $p.Name

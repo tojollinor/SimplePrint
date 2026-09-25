@@ -29,14 +29,20 @@ $items = @(Get-Printer | ForEach-Object {
   $directAddress = ''
 
   if([string]$p.DriverName -match 'Microsoft IPP Class Driver') {
-    if(-not [string]::IsNullOrWhiteSpace($deviceUrl)) {
+    $isWsdPort = ([string]$p.PortName).StartsWith('WSD-',[System.StringComparison]::OrdinalIgnoreCase)
+
+    if($isWsdPort -and
+       (-not [string]::IsNullOrWhiteSpace($deviceUrl) -or
+        -not [string]::IsNullOrWhiteSpace($deviceUuid))) {
+      # WSD ports do not always expose DeviceURL through Get-PrinterPort.
+      # DeviceUUID is an equally valid Windows discovery target.
+      $transportMode = 'Wsd'
       $directAddress = $deviceUrl
-      if(([string]$p.PortName).StartsWith('WSD-',[System.StringComparison]::OrdinalIgnoreCase)) {
-        $transportMode = 'Wsd'
-      } else {
-        # IPP directed discovery may expose http/https as well as ipp/ipps URLs.
-        $transportMode = 'Ipp'
-      }
+    }
+    elseif(-not [string]::IsNullOrWhiteSpace($deviceUrl)) {
+      $directAddress = $deviceUrl
+      # IPP directed discovery may expose http/https as well as ipp/ipps URLs.
+      $transportMode = 'Ipp'
     }
     elseif(-not [string]::IsNullOrWhiteSpace($hostAddress) -and
            $hostAddress -notin @('127.0.0.1','::1','localhost')) {

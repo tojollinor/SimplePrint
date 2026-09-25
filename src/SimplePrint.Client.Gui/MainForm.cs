@@ -721,7 +721,8 @@ public sealed class MainForm : Form
                 {
                     var routeChanged =
                         !string.Equals(current.TransportMode, tag.Printer.TransportMode, StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(current.DirectAddress, tag.Printer.DirectAddress, StringComparison.OrdinalIgnoreCase);
+                        !string.Equals(current.DirectAddress, tag.Printer.DirectAddress, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(current.DeviceUuid, tag.Printer.DeviceUuid, StringComparison.OrdinalIgnoreCase);
 
                     var classDriverMismatch =
                         PrinterTransport.IsClassDriver(tag.Printer.DriverName) &&
@@ -756,14 +757,19 @@ public sealed class MainForm : Form
 
     private async Task InstallPrinterAsync(AvailableTag tag)
     {
+        var hasDirectTarget =
+            !string.IsNullOrWhiteSpace(tag.Printer.DirectAddress) ||
+            (string.Equals(tag.Printer.TransportMode, PrinterTransport.Wsd, StringComparison.OrdinalIgnoreCase) &&
+             !string.IsNullOrWhiteSpace(tag.Printer.DeviceUuid));
+
         var direct = PrinterTransport.IsDirect(tag.Printer.TransportMode) &&
-                     !string.IsNullOrWhiteSpace(tag.Printer.DirectAddress);
+                     hasDirectTarget;
 
         if (PrinterTransport.IsMicrosoftIppClassDriver(tag.Printer.DriverName) && !direct)
         {
             throw new InvalidOperationException(
                 $"'{tag.Printer.DisplayName}' verwendet den Microsoft IPP Class Driver, " +
-                "aber der Server konnte keine direkte IPP-/WSD-Geräteadresse ermitteln.\r\n\r\n" +
+                "aber der Server konnte weder eine direkte IPP-/WSD-Geräteadresse noch eine WSD-Geräte-UUID ermitteln.\r\n\r\n" +
                 "Die Queue wird nicht mehr über den RAW-Tunnel angelegt, weil dieser Treiber eine echte " +
                 "IPP-/WSD-Gegenstelle erwartet. Bitte die Druckerfreigabe am Server neu speichern oder " +
                 "den Drucker dort mit einer erreichbaren IPP-/WSD-Verbindung installieren.");
