@@ -252,7 +252,7 @@ public static class GitHubUpdateService
 
         try
         {
-            Process.Start(psi)
+            _ = Process.Start(psi)
                 ?? throw new InvalidOperationException("Der administrative Update-Prozess konnte nicht gestartet werden.");
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
@@ -323,7 +323,7 @@ public static class GitHubUpdateService
         psi.ArgumentList.Add("--apply-update");
         psi.ArgumentList.Add(host.RequestPath);
 
-        Process.Start(psi)
+        _ = Process.Start(psi)
             ?? throw new InvalidOperationException("Der Update-Prozess konnte nicht gestartet werden.");
     }
 
@@ -391,7 +391,7 @@ public static class GitHubUpdateService
         psi.ArgumentList.Add("--update-success");
         psi.ArgumentList.Add(version);
 
-        Process.Start(psi)
+        _ = Process.Start(psi)
             ?? throw new InvalidOperationException("SimplePrint konnte nach dem Update nicht neu gestartet werden.");
     }
 
