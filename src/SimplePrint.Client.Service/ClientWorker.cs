@@ -14,7 +14,8 @@ public sealed class ClientWorker : BackgroundService
         DateTimeOffset SeenAt,
         string ServerName,
         int ProtocolVersion,
-        string AppVersion);
+        string AppVersion,
+        List<DiscoveredPrinter> Printers);
 
     private sealed class ListenerState
     {
@@ -184,7 +185,20 @@ public sealed class ClientWorker : BackgroundService
                     server.SeenAt,
                     server.Announcement.ServerName,
                     server.Announcement.Version,
-                    server.Announcement.AppVersion);
+                    server.Announcement.AppVersion,
+                    server.Announcement.Printers
+                        .Select(p => new DiscoveredPrinter
+                        {
+                            Id = p.Id,
+                            DisplayName = p.DisplayName,
+                            DriverName = p.DriverName,
+                            PortName = p.PortName,
+                            TransportMode = p.TransportMode,
+                            DirectAddress = p.DirectAddress,
+                            DeviceUuid = p.DeviceUuid,
+                            Status = p.Status
+                        })
+                        .ToList());
             }
         }
         catch (OperationCanceledException)
@@ -264,7 +278,20 @@ public sealed class ClientWorker : BackgroundService
                             ServerName = x.Value.ServerName,
                             GatewayPort = x.Value.GatewayPort,
                             Version = x.Value.ProtocolVersion,
-                            AppVersion = x.Value.AppVersion
+                            AppVersion = x.Value.AppVersion,
+                            Printers = x.Value.Printers
+                                .Select(p => new DiscoveredPrinter
+                                {
+                                    Id = p.Id,
+                                    DisplayName = p.DisplayName,
+                                    DriverName = p.DriverName,
+                                    PortName = p.PortName,
+                                    TransportMode = p.TransportMode,
+                                    DirectAddress = p.DirectAddress,
+                                    DeviceUuid = p.DeviceUuid,
+                                    Status = p.Status
+                                })
+                                .ToList()
                         },
                         x.Value.Address,
                         x.Value.SeenAt))
