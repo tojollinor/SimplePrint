@@ -431,6 +431,7 @@ $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 
 '=== DIREKTDRUCK ==='
 'Modus: {mapping.TransportMode}'
+'Queue-Typ: {(mapping.UseExistingQueue ? "vorhandene Windows-Queue übernommen" : "von SimplePrint angelegt")}'
 'Ziel: ' + $(if(-not [string]::IsNullOrWhiteSpace({PowerShellRunner.Quote(mapping.DirectAddress)})){{{PowerShellRunner.Quote(mapping.DirectAddress)}}}else{{'UUID ' + {PowerShellRunner.Quote(mapping.DeviceUuid)}}})
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 if($p) {{
