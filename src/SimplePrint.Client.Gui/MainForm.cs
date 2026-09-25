@@ -573,7 +573,9 @@ public sealed class MainForm : Form
         foreach (var m in _config.Mappings)
         {
             var transport = PrinterTransport.IsDirect(m.TransportMode)
-                ? $"Direkt {m.TransportMode}"
+                ? (m.UseExistingQueue
+                    ? $"Direkt {m.TransportMode} · vorhandene Queue"
+                    : $"Direkt {m.TransportMode} · SimplePrint-Queue")
                 : m.LocalProxyPort.ToString();
 
             var i = _installed.Rows.Add(m.LocalPrinterName, m.ServerName, m.DriverName, transport);
