@@ -9,56 +9,6 @@ internal static class WinPrinterHelper
     public static async Task<List<LocalPrinterInfo>> GetPrintersAsync()
     {
         const string script = """
-function Test-SimplePrintTcpPort([string]$address,[int]$port) {
-  $client = New-Object System.Net.Sockets.TcpClient
-  try {
-    $task = $client.ConnectAsync($address,$port)
-    if(-not $task.Wait(700)) { return $false }
-    return $client.Connected
-  }
-  catch {
-    return $false
-  }
-  finally {
-    $client.Dispose()
-  }
-}
-
-function Resolve-SimplePrintIppAddressFromUuid([string]$uuid) {
-  if([string]::IsNullOrWhiteSpace($uuid)) { return '' }
-
-  $hex = (($uuid -replace '(?i)^urn:uuid:','') -replace '[^0-9a-fA-F]','').ToUpperInvariant()
-  if($hex.Length -lt 12) { return '' }
-
-  $macHex = $hex.Substring($hex.Length - 12)
-  $mac = ((0..5 | ForEach-Object { $macHex.Substring($_ * 2,2) }) -join '-').ToUpperInvariant()
-
-  $neighbors = @(
-    Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-      Where-Object {
-        -not [string]::IsNullOrWhiteSpace([string]$_.LinkLayerAddress) -and
-        (([string]$_.LinkLayerAddress).Replace(':','-').ToUpperInvariant() -eq $mac) -and
-        ([string]$_.State -notin @('Unreachable','Incomplete'))
-      } |
-      Sort-Object @{ Expression = {
-        switch([string]$_.State) {
-          'Reachable' { 0 }
-          'Permanent' { 1 }
-          'Stale' { 2 }
-          default { 3 }
-        }
-      }}
-  )
-
-  foreach($neighbor in $neighbors) {
-    $ip = [string]$neighbor.IPAddress
-    if([string]::IsNullOrWhiteSpace($ip)) { continue }
-    if(Test-SimplePrintTcpPort $ip 631) { return $ip }
-  }
-
-  return ''
-}
-
 $items = @(Get-Printer | ForEach-Object {
   $p = $_
   $port = Get-PrinterPort -Name $p.PortName -ErrorAction SilentlyContinue
@@ -67,7 +17,6 @@ $items = @(Get-Printer | ForEach-Object {
   $deviceUuid = ''
   $hostAddress = ''
   $portNumber = $null
-  $directIppAddress = ''
 
   if($port) {
     if($port.PSObject.Properties['DeviceURL']) { $deviceUrl = [string]$port.DeviceURL }
@@ -110,21 +59,11 @@ $items = @(Get-Printer | ForEach-Object {
     }
   }
 
-  if($isWsdPort -and
-     [string]::IsNullOrWhiteSpace($deviceUrl) -and
-     -not [string]::IsNullOrWhiteSpace($deviceUuid)) {
-    $directIppAddress = Resolve-SimplePrintIppAddressFromUuid $deviceUuid
-  }
-
   $transportMode = 'Tunnel'
   $directAddress = ''
 
   if([string]$p.DriverName -match 'Microsoft IPP Class Driver') {
-    if(-not [string]::IsNullOrWhiteSpace($directIppAddress)) {
-      $directAddress = $directIppAddress
-      $transportMode = 'Ipp'
-    }
-    elseif($isWsdPort -and
+    if($isWsdPort -and
        (-not [string]::IsNullOrWhiteSpace($deviceUrl) -or
         -not [string]::IsNullOrWhiteSpace($deviceUuid))) {
       $transportMode = 'Wsd'
@@ -160,10 +99,31 @@ ConvertTo-Json -InputObject $items -Compress
         var r = await PowerShellRunner.RunAsync(script);
         if (r.ExitCode != 0) throw new InvalidOperationException(r.StdErr);
 
-        return JsonSerializer.Deserialize<List<LocalPrinterInfo>>(
-                   r.StdOut,
-                   JsonStore.Options)
-               ?? [];
+        var printers = JsonSerializer.Deserialize<List<LocalPrinterInfo>>(
+                           r.StdOut,
+                           JsonStore.Options)
+                       ?? [];
+
+        foreach (var printer in printers)
+        {
+            if (!string.Equals(
+                    printer.TransportMode,
+                    PrinterTransport.Wsd,
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(printer.DeviceUuid))
+            {
+                continue;
+            }
+
+            var directedAddress = await WsdAddressResolver.ResolveAsync(printer.DeviceUuid);
+            if (string.IsNullOrWhiteSpace(directedAddress))
+                continue;
+
+            printer.TransportMode = PrinterTransport.Ipp;
+            printer.DirectAddress = directedAddress;
+        }
+
+        return printers;
     }
 
     public static bool IsUnsafeSimplePrintLoop(LocalPrinterInfo printer) =>
@@ -369,6 +329,21 @@ if(Test-Path -LiteralPath $wsdRoot) {
   }
 } else {
   'WSD-Port-Registrypfad nicht vorhanden.'
+}
+'=== WSD DEVICE LOCATIONS ==='
+$dafRoot = 'HKLM:\SYSTEM\CurrentControlSet\Enum\SWD\DAFWSDProvider'
+if(Test-Path -LiteralPath $dafRoot) {
+  Get-ChildItem -LiteralPath $dafRoot -ErrorAction SilentlyContinue | ForEach-Object {
+    $item = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
+    [pscustomobject]@{
+      Device = $_.PSChildName
+      FriendlyName = [string]$item.FriendlyName
+      LocationInformation = [string]$item.LocationInformation
+      ContainerID = [string]$item.ContainerID
+    }
+  } | Format-Table -AutoSize | Out-String
+} else {
+  'DAFWSDProvider-Registrypfad nicht vorhanden.'
 }
 '=== FIREWALL RULES ==='
 Get-NetFirewallRule -DisplayName 'SimplePrint*' -ErrorAction SilentlyContinue | Select-Object Name,DisplayName,Enabled,Profile,Direction,Action | Format-Table -AutoSize | Out-String

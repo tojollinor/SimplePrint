@@ -46,6 +46,13 @@ public static class ClientDiagnosticsBuilder
                         $"app={server.Announcement.AppVersion} protocol={server.Announcement.Version} " +
                         $"compatible={server.Announcement.Version == Protocol.Version} " +
                         $"id={server.Announcement.ServerId} printers={server.Announcement.Printers.Count}");
+
+                    foreach (var printer in server.Announcement.Printers)
+                    {
+                        await writer.WriteLineAsync(
+                            $"  printer={printer.DisplayName}; mode={printer.TransportMode}; " +
+                            $"address={printer.DirectAddress}; uuid={printer.DeviceUuid}; status={printer.Status}");
+                    }
                 }
             }
 
