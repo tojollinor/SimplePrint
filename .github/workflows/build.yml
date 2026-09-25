@@ -53,7 +53,7 @@ jobs:
             gh release create $tag `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: adopts matching existing WSD/IPP Windows queues by device identity instead of creating duplicates, never deletes adopted queues, and retains all existing update, diagnostics, WSD registry and loop-protection features."
+              --notes "SimplePrint ${version}: retries WSD discovery and existing-port adoption when DeviceUUID installation initially fails, expands client WSD diagnostics, adds a one-UAC fully silent updater with download/install progress and automatic success restart, and starts the GUI directly hidden in the tray at Windows logon."
           }
 
           foreach ($installer in $installers) {
