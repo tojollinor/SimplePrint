@@ -23,6 +23,7 @@ public sealed class ServerWorker : BackgroundService
         LoadConfig(true);
         LoadKnownClients();
         LoadKnownJobs();
+        await EnsurePrinterSharesAsync();
 
         _log.Info($"Serverdienst gestartet. ServerId={_config.ServerId}, Discovery={_config.DiscoveryPort}, Gateway={_config.GatewayPort}");
 
@@ -181,9 +182,92 @@ public sealed class ServerWorker : BackgroundService
     {
         while (!ct.IsCancellationRequested)
         {
+            var previousWrite = _configWriteUtc;
             LoadConfig();
+
+            if (previousWrite != _configWriteUtc)
+                await EnsurePrinterSharesAsync();
+
             ApplyOfflineClientDeletions();
             await Task.Delay(1500, ct);
+        }
+    }
+
+    private async Task EnsurePrinterSharesAsync()
+    {
+        try
+        {
+            var config = SnapshotConfig();
+            var directPrinters = config.Printers
+                .Where(x => x.Enabled && PrinterTransport.IsDeviceDirect(x.TransportMode))
+                .ToList();
+
+            var shareNames = directPrinters
+                .Select(x => PrinterTransport.GetWindowsShareName(x.Id))
+                .ToArray();
+
+            var wantedArray = shareNames.Length == 0
+                ? "@()"
+                : "@(" + string.Join(
+                    ",",
+                    shareNames.Select(PowerShellRunner.Quote)) + ")";
+
+            var script = $@"
+$ErrorActionPreference='Stop'
+$wanted={wantedArray}
+
+foreach($printer in @(Get-Printer -ErrorAction SilentlyContinue | Where-Object {{ $_.Shared -and ([string]$_.ShareName) -like 'SimplePrint-*' }})) {{
+  if($wanted -notcontains [string]$printer.ShareName) {{
+    Set-Printer -Name $printer.Name -Shared $false -ErrorAction SilentlyContinue
+  }}
+}}
+";
+
+            foreach (var printer in directPrinters)
+            {
+                var shareName = PrinterTransport.GetWindowsShareName(printer.Id);
+                script += $@"
+$p = Get-Printer -Name {PowerShellRunner.Quote(printer.QueueName)} -ErrorAction Stop
+Set-Printer -Name $p.Name -Shared $true -ShareName {PowerShellRunner.Quote(shareName)} -ErrorAction Stop
+";
+            }
+
+            script += @"
+$ruleNames = @(
+  'SimplePrint-PrintShare-SMB',
+  'SimplePrint-PrintShare-RPC',
+  'SimplePrint-PrintShare-RPCMap'
+)
+
+foreach($name in $ruleNames) {
+  Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+}
+
+if($wanted.Count -gt 0) {
+  New-NetFirewallRule -Name 'SimplePrint-PrintShare-SMB' -DisplayName 'SimplePrint Printer Sharing SMB' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 445 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+  New-NetFirewallRule -Name 'SimplePrint-PrintShare-RPC' -DisplayName 'SimplePrint Printer Sharing RPC' -Direction Inbound -Action Allow -Enabled True -LocalPort RPC -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+  New-NetFirewallRule -Name 'SimplePrint-PrintShare-RPCMap' -DisplayName 'SimplePrint Printer Sharing RPC Endpoint Mapper' -Direction Inbound -Action Allow -Enabled True -LocalPort RPCEPMap -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+}
+";
+
+            var result = await PowerShellRunner.RunAsync(script);
+            if (result.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    string.IsNullOrWhiteSpace(result.StdErr)
+                        ? "Windows-Druckerfreigaben konnten nicht vorbereitet werden."
+                        : result.StdErr.Trim());
+            }
+
+            if (directPrinters.Count > 0)
+            {
+                _log.Info(
+                    $"{directPrinters.Count} direkte Druckerqueue(s) als Windows-Fallbackfreigabe vorbereitet.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Windows-Fallbackfreigaben konnten nicht vorbereitet werden", ex);
         }
     }
 

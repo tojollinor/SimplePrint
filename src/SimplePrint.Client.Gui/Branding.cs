@@ -6,7 +6,7 @@ namespace SimplePrint.Client.Gui;
 internal static class Branding
 {
     private const string EmbeddedLogoResource = "SimplePrint.DefaultLogo.png";
-    private const string FixedIconName = "app-0.2.9.ico";
+    private const string FixedIconName = "app-0.2.10.ico";
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyIcon(IntPtr hIcon);

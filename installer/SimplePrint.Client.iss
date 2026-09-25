@@ -1,5 +1,5 @@
 #define MyAppName "SimplePrint Client"
-#define MyAppVersion "0.2.9"
+#define MyAppVersion "0.2.10"
 #define MyAppPublisher "tojollinor"
 #define MyAppURL "https://github.com/tojollinor/SimplePrint"
 #define RootDir ".."
@@ -23,8 +23,8 @@ OutputBaseFilename=SimplePrint-Client-Setup-{#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile={#RootDir}\assets\app-0.2.9.ico
-UninstallDisplayIcon={app}\Client\assets\app-0.2.9.ico
+SetupIconFile={#RootDir}\assets\app-0.2.10.ico
+UninstallDisplayIcon={app}\Client\assets\app-0.2.10.ico
 UninstallDisplayName=SimplePrint Client
 Uninstallable=yes
 CreateUninstallRegKey=yes
@@ -37,15 +37,15 @@ Source: "{#RootDir}\dist\Client\Service\*"; DestDir: "{app}\Client\Service"; Fla
 Source: "{#RootDir}\dist\Client\Gui\*"; DestDir: "{app}\Client\Gui"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#RootDir}\installer\Install-Component.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "{#RootDir}\assets\logo.png"; DestDir: "{app}\Client\assets"; DestName: "logo.png"; Flags: ignoreversion onlyifdoesntexist
-Source: "{#RootDir}\assets\app-0.2.9.ico"; DestDir: "{app}\Client\assets"; DestName: "app-0.2.9.ico"; Flags: ignoreversion
+Source: "{#RootDir}\assets\app-0.2.10.ico"; DestDir: "{app}\Client\assets"; DestName: "app-0.2.10.ico"; Flags: ignoreversion
 
 [Registry]
 Root: HKLM64; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SimplePrintClientGui"; ValueData: """{app}\Client\Gui\SimplePrint.Client.Gui.exe"" --tray"; Flags: uninsdeletevalue
 
 [Icons]
-Name: "{group}\SimplePrint Client"; Filename: "{app}\Client\Gui\SimplePrint.Client.Gui.exe"; IconFilename: "{app}\Client\assets\app-0.2.9.ico"
-Name: "{group}\SimplePrint Client deinstallieren"; Filename: "{uninstallexe}"; IconFilename: "{app}\Client\assets\app-0.2.9.ico"
-Name: "{commondesktop}\SimplePrint Client"; Filename: "{app}\Client\Gui\SimplePrint.Client.Gui.exe"; IconFilename: "{app}\Client\assets\app-0.2.9.ico"; Tasks: desktopicon
+Name: "{group}\SimplePrint Client"; Filename: "{app}\Client\Gui\SimplePrint.Client.Gui.exe"; IconFilename: "{app}\Client\assets\app-0.2.10.ico"
+Name: "{group}\SimplePrint Client deinstallieren"; Filename: "{uninstallexe}"; IconFilename: "{app}\Client\assets\app-0.2.10.ico"
+Name: "{commondesktop}\SimplePrint Client"; Filename: "{app}\Client\Gui\SimplePrint.Client.Gui.exe"; IconFilename: "{app}\Client\assets\app-0.2.10.ico"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Desktop-Verknüpfung erstellen"; GroupDescription: "Zusätzliche Symbole:"; Flags: unchecked
@@ -58,7 +58,7 @@ Filename: "{app}\Client\Gui\SimplePrint.Client.Gui.exe"; Description: "SimplePri
 Filename: "{sys}\sc.exe"; Parameters: "stop SimplePrintClient"; Flags: runhidden waituntilterminated; RunOnceId: StopClient
 Filename: "{sys}\sc.exe"; Parameters: "delete SimplePrintClient"; Flags: runhidden waituntilterminated; RunOnceId: DeleteClient
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-NetFirewallRule -Name 'SimplePrint-ClientDiagnostics' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; Get-NetFirewallRule -DisplayName 'SimplePrint Client Diagnostics' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"""; Flags: runhidden waituntilterminated; RunOnceId: RemoveClientDiagnosticsFirewall
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-Printer | Where-Object {{ $_.PortName -Like 'SimplePrint_*' -or $_.Comment -Like 'SimplePrint:*' } | Remove-Printer -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Get-PrinterPort | Where-Object Name -Like 'SimplePrint_*' | Remove-PrinterPort -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated; RunOnceId: RemoveClientPrinters
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$cfgPath=Join-Path $env:ProgramData 'SimplePrint\Client\config.json'; if(Test-Path $cfgPath){{ try{{ $cfg=Get-Content $cfgPath -Raw | ConvertFrom-Json; foreach($m in @($cfg.Mappings)){{ if([string]$m.TransportMode -eq 'WindowsShare' -and -not [string]::IsNullOrWhiteSpace([string]$m.DirectAddress)){{ Remove-Printer -Name ([string]$m.DirectAddress) -ErrorAction SilentlyContinue }} }} }}catch{{}} }}; Get-Printer | Where-Object {{ $_.PortName -Like 'SimplePrint_*' -or $_.Comment -Like 'SimplePrint:*' } | Remove-Printer -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Get-PrinterPort | Where-Object Name -Like 'SimplePrint_*' | Remove-PrinterPort -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated; RunOnceId: RemoveClientPrinters
 
 [Code]
 procedure StopService(Name: String);

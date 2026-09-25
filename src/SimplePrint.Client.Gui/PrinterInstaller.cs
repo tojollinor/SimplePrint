@@ -157,6 +157,31 @@ Add-PrinterDriver -Name $driver -ErrorAction Stop
 
     public static Task InstallAsync(ClientPrinterMapping mapping)
     {
+        if (string.Equals(
+                mapping.TransportMode,
+                PrinterTransport.WindowsShare,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            var shareScript = $@"
+$connection={PowerShellRunner.Quote(mapping.DirectAddress)}
+if([string]::IsNullOrWhiteSpace($connection) -or -not $connection.StartsWith('\\')) {{
+  throw 'Die Windows-Druckerfreigabe ist ungültig.'
+}}
+
+$existing = Get-Printer -Name $connection -ErrorAction SilentlyContinue
+if(-not $existing) {{
+  Add-Printer -ConnectionName $connection -ErrorAction Stop
+  Start-Sleep -Milliseconds 800
+  $existing = Get-Printer -Name $connection -ErrorAction SilentlyContinue
+}}
+
+if(-not $existing) {{
+  throw ('Windows konnte die Server-Druckerfreigabe nicht verbinden: ' + $connection)
+}}
+";
+            return PrivilegeHelper.RunPowerShellElevatedAsync(shareScript);
+        }
+
         if (PrinterTransport.IsDirect(mapping.TransportMode))
         {
             if (mapping.UseExistingQueue)
@@ -349,6 +374,31 @@ if($existing) {{
 
     public static Task RemoveAsync(ClientPrinterMapping mapping)
     {
+        if (string.Equals(
+                mapping.TransportMode,
+                PrinterTransport.WindowsShare,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            var shareScript = $@"
+$connection={PowerShellRunner.Quote(mapping.DirectAddress)}
+$p = Get-Printer -Name $connection -ErrorAction SilentlyContinue
+if($p) {{
+  Remove-Printer -Name $connection -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 400
+}}
+
+if(Get-Printer -Name $connection -ErrorAction SilentlyContinue) {{
+  & rundll32.exe printui.dll,PrintUIEntry /dn /n $connection
+  Start-Sleep -Milliseconds 400
+}}
+
+if(Get-Printer -Name $connection -ErrorAction SilentlyContinue) {{
+  throw ('Die verbundene Server-Druckerqueue konnte nicht entfernt werden: ' + $connection)
+}}
+";
+            return PrivilegeHelper.RunPowerShellElevatedAsync(shareScript);
+        }
+
         if (PrinterTransport.IsDirect(mapping.TransportMode))
         {
             if (mapping.UseExistingQueue)

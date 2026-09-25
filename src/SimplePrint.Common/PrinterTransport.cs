@@ -5,10 +5,22 @@ public static class PrinterTransport
     public const string Tunnel = "Tunnel";
     public const string Ipp = "Ipp";
     public const string Wsd = "Wsd";
+    public const string WindowsShare = "WindowsShare";
 
     public static bool IsDirect(string? mode) =>
         string.Equals(mode, Ipp, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(mode, Wsd, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(mode, WindowsShare, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsDeviceDirect(string? mode) =>
+        string.Equals(mode, Ipp, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(mode, Wsd, StringComparison.OrdinalIgnoreCase);
+
+    public static string GetWindowsShareName(Guid printerId) =>
+        $"SimplePrint-{printerId.ToString("N")[..8]}";
+
+    public static string GetWindowsSharePath(string serverAddress, Guid printerId) =>
+        $@"\\{serverAddress}\{GetWindowsShareName(printerId)}";
 
     public static bool IsMicrosoftIppClassDriver(string? driverName) =>
         !string.IsNullOrWhiteSpace(driverName) &&
