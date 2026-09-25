@@ -94,7 +94,7 @@ internal sealed class UpdateForm : Form
         _releasePage.SetBounds(26, 383, 145, 34);
         _later.SetBounds(330, 383, 95, 34);
         _install.SetBounds(436, 383, 145, 34);
-        _install.Click += async (_, _) => await InstallAsync();
+        _install.Click += (_, _) => Install();
         _later.Click += (_, _) => Close();
         _releasePage.Click += (_, _) => OpenReleasePage();
 
@@ -106,37 +106,28 @@ internal sealed class UpdateForm : Form
         FormClosed += (_, _) => _downloadCancellation.Dispose();
     }
 
-    private async Task InstallAsync()
+    private void Install()
     {
         try
         {
             _install.Enabled = false;
             _later.Enabled = false;
             _releasePage.Enabled = false;
-            _progress.Visible = true;
-            _progress.Style = ProgressBarStyle.Continuous;
-            _status.Text = "Installer wird von GitHub heruntergeladen …";
+            _progress.Visible = false;
+            _status.Text = "Administratorfreigabe wird angefordert …";
 
-            var progress = new Progress<int>(value =>
-            {
-                _progress.Value = Math.Clamp(value, 0, 100);
-                _status.Text = $"Installer wird heruntergeladen … {value}%";
-            });
+            GitHubUpdateService.LaunchElevatedBootstrap(Application.ExecutablePath);
 
-            var path = await GitHubUpdateService.DownloadInstallerAsync(
-                _release,
-                progress,
-                _downloadCancellation.Token);
-
-            _status.Text = "Download geprüft. Installer wird gestartet …";
-            GitHubUpdateService.LaunchInstaller(path);
             InstallerStarted = true;
             DialogResult = DialogResult.OK;
             Close();
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            _status.Text = "Update-Download abgebrochen.";
+            _status.Text = ex.Message;
+            _install.Enabled = true;
+            _later.Enabled = true;
+            _releasePage.Enabled = true;
         }
         catch (Exception ex)
         {
@@ -144,7 +135,6 @@ internal sealed class UpdateForm : Form
             _install.Enabled = true;
             _later.Enabled = true;
             _releasePage.Enabled = true;
-            _progress.Visible = false;
         }
     }
 
