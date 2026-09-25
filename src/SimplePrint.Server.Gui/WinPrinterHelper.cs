@@ -330,6 +330,21 @@ if(Test-Path -LiteralPath $wsdRoot) {
 } else {
   'WSD-Port-Registrypfad nicht vorhanden.'
 }
+'=== WSD DEVICE LOCATIONS ==='
+$dafRoot = 'HKLM:\SYSTEM\CurrentControlSet\Enum\SWD\DAFWSDProvider'
+if(Test-Path -LiteralPath $dafRoot) {
+  Get-ChildItem -LiteralPath $dafRoot -ErrorAction SilentlyContinue | ForEach-Object {
+    $item = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
+    [pscustomobject]@{
+      Device = $_.PSChildName
+      FriendlyName = [string]$item.FriendlyName
+      LocationInformation = [string]$item.LocationInformation
+      ContainerID = [string]$item.ContainerID
+    }
+  } | Format-Table -AutoSize | Out-String
+} else {
+  'DAFWSDProvider-Registrypfad nicht vorhanden.'
+}
 '=== FIREWALL RULES ==='
 Get-NetFirewallRule -DisplayName 'SimplePrint*' -ErrorAction SilentlyContinue | Select-Object Name,DisplayName,Enabled,Profile,Direction,Action | Format-Table -AutoSize | Out-String
 '=== FIREWALL PORT FILTERS ==='
