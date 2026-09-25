@@ -74,11 +74,9 @@ public sealed class MainForm : Form
         tabs.TabPages.Add(CreateInstalledTab());
         tabs.TabPages.Add(CreateJobsTab());
         tabs.TabPages.Add(CreateSettingsTab());
-        tabs.Selected += async (_, e) =>
+        tabs.Selected += (_, e) =>
         {
-            if (e.TabPage?.Text == "Verfügbare Drucker")
-                await RefreshAvailablePrintersAsync();
-            else if (e.TabPage?.Text == "Druckaufträge")
+            if (e.TabPage?.Text == "Druckaufträge")
                 RefreshJobsGrid();
         };
 
@@ -241,7 +239,7 @@ public sealed class MainForm : Form
         infoPanel.Controls.Add(_selectedServer);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
-        buttons.Controls.Add(MakeButton("Diesen Server verwenden", (_, _) => UseSelectedServer()));
+        buttons.Controls.Add(MakeButton("Diesen Server verwenden", async (_, _) => await UseSelectedServerAsync()));
         buttons.Controls.Add(MakeButton("Serverauswahl aufheben", (_, _) => ClearServerSelection()));
         buttons.Controls.Add(MakeButton("Neu suchen", async (_, _) => await RefreshAllAsync()));
 
@@ -672,7 +670,7 @@ public sealed class MainForm : Form
         SetStatus("✓ Druckauftragshistorie gelöscht.");
     }
 
-    private void UseSelectedServer()
+    private async Task UseSelectedServerAsync()
     {
         if (_serversGrid.SelectedRows.Count == 0)
         {
@@ -698,7 +696,9 @@ public sealed class MainForm : Form
         JsonStore.Save(AppPaths.ClientConfig, _config);
 
         RefreshServerGrid();
-        RefreshAvailableGrid();
+
+        SetBusy($"Drucker von '{server.Announcement.ServerName}' werden geladen …");
+        await RefreshAvailablePrintersAsync();
 
         SetStatus($"✓ Server '{server.Announcement.ServerName}' ausgewählt.");
         MessageBox.Show(
