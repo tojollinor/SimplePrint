@@ -743,6 +743,7 @@ public sealed class MainForm : Form
                         !string.Equals(current.DeviceUuid, tag.Printer.DeviceUuid, StringComparison.OrdinalIgnoreCase);
 
                     var classDriverMismatch =
+                        !PrinterTransport.IsDirect(tag.Printer.TransportMode) &&
                         PrinterTransport.IsClassDriver(tag.Printer.DriverName) &&
                         !string.Equals(current.DriverName, tag.Printer.DriverName, StringComparison.OrdinalIgnoreCase);
 
@@ -793,11 +794,22 @@ public sealed class MainForm : Form
                 "den Drucker dort mit einer erreichbaren IPP-/WSD-Verbindung installieren.");
         }
 
+        ReusableDirectPrinter? reusableDirectPrinter = null;
+
+        if (direct)
+        {
+            reusableDirectPrinter = await PrinterInstaller.FindReusableDirectPrinterAsync(
+                tag.Printer.TransportMode,
+                tag.Printer.DirectAddress,
+                tag.Printer.DeviceUuid,
+                tag.Printer.DisplayName);
+        }
+
         string driver;
 
         if (direct)
         {
-            driver = tag.Printer.DriverName;
+            driver = reusableDirectPrinter?.DriverName ?? tag.Printer.DriverName;
         }
         else
         {
@@ -854,10 +866,12 @@ public sealed class MainForm : Form
         var shortServer = tag.Server.Announcement.ServerId.ToString("N")[..8];
         var shortPrinter = tag.Printer.Id.ToString("N")[..8];
         var localPort = direct ? 0 : AllocatePort();
-        var portName = direct
-            ? $"SimplePrintDirect_{shortServer}_{shortPrinter}"
-            : $"SimplePrint_{shortServer}_{shortPrinter}";
-        var localName = UniqueLocalName($"{tag.Printer.DisplayName} (SimplePrint)");
+        var portName = reusableDirectPrinter?.PortName ??
+            (direct
+                ? $"SimplePrintDirect_{shortServer}_{shortPrinter}"
+                : $"SimplePrint_{shortServer}_{shortPrinter}");
+        var localName = reusableDirectPrinter?.Name ??
+            UniqueLocalName($"{tag.Printer.DisplayName} (SimplePrint)");
 
         var mapping = new ClientPrinterMapping
         {
@@ -871,7 +885,8 @@ public sealed class MainForm : Form
             LocalProxyPort = localPort,
             TransportMode = direct ? tag.Printer.TransportMode : PrinterTransport.Tunnel,
             DirectAddress = direct ? tag.Printer.DirectAddress : "",
-            DeviceUuid = direct ? tag.Printer.DeviceUuid : ""
+            DeviceUuid = direct ? tag.Printer.DeviceUuid : "",
+            UseExistingQueue = reusableDirectPrinter is not null
         };
 
         _config.Mappings.Add(mapping);
@@ -886,6 +901,10 @@ public sealed class MainForm : Form
                 if (!await WaitForLocalProxyAsync(localPort, TimeSpan.FromSeconds(8)))
                     throw new InvalidOperationException(
                         $"Der SimplePrint Client-Agent lauscht nicht auf 127.0.0.1:{localPort}. Die Windows-Druckerqueue wurde deshalb nicht angelegt.");
+            }
+            else if (mapping.UseExistingQueue)
+            {
+                SetBusy($"Vorhandene Windows-Druckerqueue '{mapping.LocalPrinterName}' wird übernommen …");
             }
             else
             {
