@@ -3,7 +3,7 @@ name: Build SimplePrint
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, dev/0.2.6 ]
 
 permissions:
   contents: write
@@ -53,7 +53,7 @@ jobs:
             gh release create $tag `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: WSD DeviceUUID fallback for Microsoft IPP Class Driver queues without DeviceURL, plus the existing separate server/client installers, automatic updates, printer readiness diagnostics, class-driver handling and loop protection."
+              --notes "SimplePrint ${version}: robust WSD UUID registry fallback, full server+client diagnostics collection, diagnostics moved to General, manual update check in both tray menus, plus existing printing, health and loop-protection features."
           }
 
           foreach ($installer in $installers) {
