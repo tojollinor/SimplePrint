@@ -53,7 +53,7 @@ jobs:
             gh release create $tag `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: safe migration from stale RAW tunnel mappings to direct WSD/IPP queues without deleting physical Windows printers, plus explicit queue-assignment diagnostics and all existing update/diagnostic features."
+              --notes "SimplePrint ${version}: adopts matching existing WSD/IPP Windows queues by device identity instead of creating duplicates, never deletes adopted queues, and retains all existing update, diagnostics, WSD registry and loop-protection features."
           }
 
           foreach ($installer in $installers) {

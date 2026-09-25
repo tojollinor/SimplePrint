@@ -116,6 +116,7 @@ public static class ClientDiagnosticsBuilder
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $address={PowerShellRunner.Quote(mapping.DirectAddress)}
 $deviceUuid={PowerShellRunner.Quote(mapping.DeviceUuid)}
+$adopted={(mapping.UseExistingQueue ? "$true" : "$false")}
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 $problems = @()
 if(-not $p) {{ $problems += 'Direkte Windows-Druckerqueue fehlt.' }}
@@ -131,6 +132,7 @@ $target = if(-not [string]::IsNullOrWhiteSpace($address)) {{
 [pscustomobject]@{{
   Ready = ($problems.Count -eq 0)
   Detail = 'Modus={mapping.TransportMode}; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
+           '; Queue-Typ=' + $(if($adopted){{'vorhandene Windows-Queue übernommen'}}else{{'von SimplePrint angelegt'}}) +
            '; Ziel=' + $target
   Problems = @($problems)
   Warnings = @($problems)
