@@ -155,14 +155,10 @@ Add-PrinterDriver -Name $driver -ErrorAction Stop
         return installed.Any(x => x.Equals(driverName, StringComparison.OrdinalIgnoreCase));
     }
 
-    public static Task InstallAsync(ClientPrinterMapping mapping)
+    private static async Task InstallWindowsShareAsync(ClientPrinterMapping mapping)
     {
-        if (string.Equals(
-                mapping.TransportMode,
-                PrinterTransport.WindowsShare,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            var shareScript = $@"
+        var shareScript = $@"
+$ErrorActionPreference='Stop'
 $connection={PowerShellRunner.Quote(mapping.DirectAddress)}
 if([string]::IsNullOrWhiteSpace($connection) -or -not $connection.StartsWith('\\')) {{
   throw 'Die Windows-Druckerfreigabe ist ungültig.'
@@ -179,7 +175,59 @@ if(-not $existing) {{
   throw ('Windows konnte die Server-Druckerfreigabe nicht verbinden: ' + $connection)
 }}
 ";
-            return PrivilegeHelper.RunPowerShellElevatedAsync(shareScript);
+
+        var normal = await PowerShellRunner.RunAsync(shareScript);
+        if (normal.ExitCode == 0)
+            return;
+
+        var detail = string.Join(
+            Environment.NewLine,
+            new[] { normal.StdErr, normal.StdOut }
+                .Where(x => !string.IsNullOrWhiteSpace(x)))
+            .Trim();
+
+        var credentialError =
+            detail.Contains("0x8007052e", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("alternative Benutzeranmeldeinformationen", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("Logon failure", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("Anmeldefehler", StringComparison.OrdinalIgnoreCase);
+
+        if (credentialError)
+        {
+            throw new InvalidOperationException(
+                "Die Windows-Druckerfreigabe des SimplePrint-Servers verlangt Netzwerk-Anmeldedaten. " +
+                "Das ist kein lokales Administratorproblem und würde durch eine weitere UAC-Abfrage nicht behoben. " +
+                "SimplePrint hat deshalb keinen unnötigen zweiten Admin-Prompt geöffnet.\r\n\r\n" +
+                detail);
+        }
+
+        var elevationLikelyRequired =
+            detail.Contains("0x80070005", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("Zugriff verweigert", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("Access is denied", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("Administrator", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("elevation", StringComparison.OrdinalIgnoreCase);
+
+        if (elevationLikelyRequired)
+        {
+            await PrivilegeHelper.RunPowerShellElevatedAsync(shareScript);
+            return;
+        }
+
+        throw new InvalidOperationException(
+            string.IsNullOrWhiteSpace(detail)
+                ? "Die Windows-Druckerfreigabe konnte nicht verbunden werden."
+                : detail);
+    }
+
+    public static Task InstallAsync(ClientPrinterMapping mapping)
+    {
+        if (string.Equals(
+                mapping.TransportMode,
+                PrinterTransport.WindowsShare,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return InstallWindowsShareAsync(mapping);
         }
 
         if (PrinterTransport.IsDirect(mapping.TransportMode))
