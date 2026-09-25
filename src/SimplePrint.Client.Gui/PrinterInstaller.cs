@@ -281,17 +281,45 @@ if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison
       throw ('Die vom Server gelieferte WSD-DeviceUUID ist ungültig: ' + $deviceUuid)
     }}
 
+    function Ensure-WsdDiscoveryPrerequisites {{
+      $publicProfiles = @(
+        Get-NetConnectionProfile -ErrorAction SilentlyContinue |
+          Where-Object {{ $_.IPv4Connectivity -ne 'Disconnected' -and $_.NetworkCategory -eq 'Public' }}
+      )
+
+      if($publicProfiles.Count -gt 0) {{
+        throw (
+          'Die aktive Windows-Netzwerkverbindung ist als Öffentlich eingestuft. ' +
+          'WSD-Erkennung wird von SimplePrint aus Sicherheitsgründen nur in privaten oder Domänennetzwerken automatisch freigeschaltet.')
+      }}
+
+      $fd = Get-Service -Name fdPHost -ErrorAction SilentlyContinue
+      if($fd -and $fd.Status -ne 'Running') {{
+        Start-Service -Name fdPHost -ErrorAction Stop
+      }}
+
+      $wsdRules = @(
+        'SimplePrint-WSD-Discovery-In',
+        'SimplePrint-WSD-Events-In',
+        'SimplePrint-WSD-EventsSecure-In'
+      )
+
+      foreach($rule in $wsdRules) {{
+        Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+      }}
+
+      New-NetFirewallRule -Name 'SimplePrint-WSD-Discovery-In' -DisplayName 'SimplePrint WSD Discovery' -Direction Inbound -Action Allow -Enabled True -Protocol UDP -LocalPort 3702 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+      New-NetFirewallRule -Name 'SimplePrint-WSD-Events-In' -DisplayName 'SimplePrint WSD Events' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 5357 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+      New-NetFirewallRule -Name 'SimplePrint-WSD-EventsSecure-In' -DisplayName 'SimplePrint WSD Events Secure' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 5358 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+
+      try {{ & pnputil.exe /scan-devices | Out-Null }} catch {{}}
+    }}
+
     $created = Try-CreateFromKnownPort $rawUuid
 
     if(-not $created) {{
-      $fd = Get-Service -Name fdPHost -ErrorAction SilentlyContinue
-      if($fd -and $fd.Status -ne 'Running') {{
-        Start-Service -Name fdPHost -ErrorAction SilentlyContinue
-      }}
-
-      try {{ & pnputil.exe /scan-devices | Out-Null }} catch {{}}
-      Start-Sleep -Milliseconds 800
-
+      Ensure-WsdDiscoveryPrerequisites
+      Start-Sleep -Milliseconds 1800
       $created = Try-CreateFromKnownPort $rawUuid
     }}
 
@@ -303,7 +331,7 @@ if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison
     $lastError = $null
 
     if(-not $created) {{
-      for($round = 0; $round -lt 2 -and -not $created; $round++) {{
+      for($round = 0; $round -lt 3 -and -not $created; $round++) {{
         foreach($candidate in $candidates) {{
           try {{
             Add-Printer -Name $printer -DeviceUUID $candidate -Comment $tag -ErrorAction Stop
@@ -322,7 +350,7 @@ if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison
         }}
 
         if(-not $created) {{
-          Start-Sleep -Milliseconds 1200
+          Start-Sleep -Milliseconds 1800
           $created = Try-CreateFromKnownPort $rawUuid
         }}
       }}
@@ -333,7 +361,9 @@ if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison
       throw (
         'Windows konnte den WSD-Drucker nicht über die vom Server ermittelte DeviceUUID finden. ' +
         'DeviceUUID: ' + $uuidGuid.ToString() + '. ' +
-        'Der Client hat die WSD-Erkennung automatisch neu angestoßen und vorhandene WSD-Ports geprüft. ' +
+        'SimplePrint hat den Function-Discovery-Dienst gestartet, die für WSD benötigten ' +
+        'Firewallports 3702/UDP sowie 5357-5358/TCP für Privat/Domäne + LocalSubnet freigeschaltet, ' +
+        'die Geräteerkennung neu angestoßen und vorhandene WSD-Ports geprüft. ' +
         'Der Drucker muss vom Client im selben Netzwerk per WSD erreichbar sein. Details: ' + $detail)
     }}
   }}

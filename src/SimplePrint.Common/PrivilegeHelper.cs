@@ -23,7 +23,9 @@ catch {{
   exit 1
 }}
 ";
-        await File.WriteAllTextAsync(scriptPath, wrapper, new UTF8Encoding(false));
+        // Windows PowerShell 5.1 interpretiert UTF-8 ohne BOM bei -File sonst als ANSI.
+        // Mit BOM bleiben Umlaute und Fehlermeldungen in den administrativen Skripten korrekt.
+        await File.WriteAllTextAsync(scriptPath, wrapper, new UTF8Encoding(true));
 
         try
         {

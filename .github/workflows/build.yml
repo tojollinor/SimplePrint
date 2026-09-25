@@ -53,7 +53,7 @@ jobs:
             gh release create $tag `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: adds an automatic Windows print-share fallback when a client cannot discover a server-side WSD/IPP printer directly. The server prepares deterministic printer shares plus LocalSubnet-only SMB/RPC firewall rules, while direct WSD/IPP adoption, silent updates, diagnostics and tray startup remain available."
+              --notes "SimplePrint ${version}: prepares Windows WSD discovery prerequisites on clients before DeviceUUID installation, adds LocalSubnet-only WSD firewall rules and repeated discovery attempts, fixes the printer-share firewall setup, and preserves UTF-8 text in elevated PowerShell errors."
           }
 
           foreach ($installer in $installers) {
