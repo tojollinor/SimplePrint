@@ -216,7 +216,7 @@ public sealed class ServerWorker : BackgroundService
 $ErrorActionPreference='Stop'
 $wanted={wantedArray}
 
-foreach($printer in @(Get-Printer -ErrorAction SilentlyContinue | Where-Object {{ $_.Shared -and ([string]$_.ShareName) -like 'SimplePrint_*' }})) {{
+foreach($printer in @(Get-Printer -ErrorAction SilentlyContinue | Where-Object {{ $_.Shared -and ([string]$_.ShareName) -like 'SimplePrint-*' }})) {{
   if($wanted -notcontains [string]$printer.ShareName) {{
     Set-Printer -Name $printer.Name -Shared $false -ErrorAction SilentlyContinue
   }}
