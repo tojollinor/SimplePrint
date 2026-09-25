@@ -11,6 +11,13 @@ internal sealed class LocalPrinterReadiness
     public List<string> Warnings { get; set; } = [];
 }
 
+internal sealed class ReusableDirectPrinter
+{
+    public string Name { get; set; } = "";
+    public string DriverName { get; set; } = "";
+    public string PortName { get; set; } = "";
+}
+
 internal static class PrinterInstaller
 {
     public static async Task<List<string>> GetDriverNamesAsync()
@@ -18,6 +25,107 @@ internal static class PrinterInstaller
         var r = await PowerShellRunner.RunAsync("ConvertTo-Json -InputObject @(Get-PrinterDriver | Select-Object -ExpandProperty Name) -Compress");
         if (r.ExitCode != 0) throw new InvalidOperationException(r.StdErr);
         return JsonSerializer.Deserialize<List<string>>(r.StdOut, JsonStore.Options) ?? [];
+    }
+
+    public static async Task<ReusableDirectPrinter?> FindReusableDirectPrinterAsync(
+        string transportMode,
+        string directAddress,
+        string deviceUuid,
+        string preferredName)
+    {
+        var script = $@"
+$transport={PowerShellRunner.Quote(transportMode)}
+$targetAddress={PowerShellRunner.Quote(directAddress)}
+$targetUuid={PowerShellRunner.Quote(deviceUuid)}
+$preferredName={PowerShellRunner.Quote(preferredName)}
+
+function Normalize-Uuid([string]$value) {{
+  if([string]::IsNullOrWhiteSpace($value)) {{ return '' }}
+  $v = $value.Trim()
+  if($v.StartsWith('urn:uuid:', [System.StringComparison]::OrdinalIgnoreCase)) {{
+    $v = $v.Substring(9)
+  }}
+  $g = [Guid]::Empty
+  if([Guid]::TryParse($v, [ref]$g)) {{ return $g.ToString('D') }}
+  return $v.ToLowerInvariant()
+}}
+
+$normalizedTargetUuid = Normalize-Uuid $targetUuid
+$matches = @()
+
+Get-Printer | ForEach-Object {{
+  $p = $_
+  $port = Get-PrinterPort -Name $p.PortName -ErrorAction SilentlyContinue
+
+  $deviceUrl = ''
+  $localUuid = ''
+  $hostAddress = ''
+
+  if($port) {{
+    if($port.PSObject.Properties['DeviceURL']) {{ $deviceUrl = [string]$port.DeviceURL }}
+    if($port.PSObject.Properties['DeviceUUID']) {{ $localUuid = [string]$port.DeviceUUID }}
+    if($port.PSObject.Properties['PrinterHostAddress']) {{ $hostAddress = [string]$port.PrinterHostAddress }}
+  }}
+
+  $isWsd = ([string]$p.PortName).StartsWith('WSD-',[System.StringComparison]::OrdinalIgnoreCase)
+  if($isWsd -and [string]::IsNullOrWhiteSpace($localUuid)) {{
+    $wsdKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\WSD Port\Ports\' + [string]$p.PortName
+    if(Test-Path -LiteralPath $wsdKey) {{
+      $wsd = Get-ItemProperty -LiteralPath $wsdKey -ErrorAction SilentlyContinue
+      if($wsd) {{
+        if($wsd.PSObject.Properties['Printer UUID']) {{
+          $localUuid = [string]$wsd.'Printer UUID'
+        }}
+        if([string]::IsNullOrWhiteSpace($localUuid)) {{
+          foreach($property in $wsd.PSObject.Properties) {{
+            $value = [string]$property.Value
+            if($value -match '(?i)urn:uuid:[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}') {{
+              $localUuid = $Matches[0]
+              break
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+
+  $sameDevice = $false
+  if($transport -eq 'Wsd' -and -not [string]::IsNullOrWhiteSpace($normalizedTargetUuid)) {{
+    $sameDevice = ((Normalize-Uuid $localUuid) -eq $normalizedTargetUuid)
+  }}
+  elseif($transport -eq 'Ipp' -and -not [string]::IsNullOrWhiteSpace($targetAddress)) {{
+    $sameDevice =
+      ([string]$deviceUrl).Equals($targetAddress,[System.StringComparison]::OrdinalIgnoreCase) -or
+      ([string]$hostAddress).Equals($targetAddress,[System.StringComparison]::OrdinalIgnoreCase)
+  }}
+
+  if($sameDevice) {{
+    $matches += [pscustomobject]@{{
+      Name = [string]$p.Name
+      DriverName = [string]$p.DriverName
+      PortName = [string]$p.PortName
+      Preferred = ([string]$p.Name).Equals($preferredName,[System.StringComparison]::OrdinalIgnoreCase)
+    }}
+  }}
+}}
+
+$selected = $matches | Sort-Object Preferred -Descending | Select-Object -First 1
+if($selected) {{ $selected | ConvertTo-Json -Compress }}
+";
+
+        var result = await PowerShellRunner.RunAsync(script);
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(result.StdErr)
+                    ? "Vorhandene direkte Windows-Druckerqueues konnten nicht geprüft werden."
+                    : result.StdErr.Trim());
+
+        if (string.IsNullOrWhiteSpace(result.StdOut))
+            return null;
+
+        return JsonSerializer.Deserialize<ReusableDirectPrinter>(
+            result.StdOut,
+            JsonStore.Options);
     }
 
     public static async Task<bool> EnsureDriverInstalledAsync(string driverName)
@@ -41,6 +149,17 @@ Add-PrinterDriver -Name $driver -ErrorAction Stop
     {
         if (PrinterTransport.IsDirect(mapping.TransportMode))
         {
+            if (mapping.UseExistingQueue)
+            {
+                var verifyExistingScript = $@"
+$printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
+if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{
+  throw ('Die übernommene Windows-Druckerqueue ' + $printer + ' wurde nicht gefunden.')
+}}
+";
+                return PrivilegeHelper.RunPowerShellElevatedAsync(verifyExistingScript);
+            }
+
             var directScript = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $address={PowerShellRunner.Quote(mapping.DirectAddress)}
@@ -142,6 +261,9 @@ if($existing) {{
     {
         if (PrinterTransport.IsDirect(mapping.TransportMode))
         {
+            if (mapping.UseExistingQueue)
+                return Task.CompletedTask;
+
             var tag = $"SimplePrint:{mapping.ServerId:N}:{mapping.PrinterId:N}";
             var directScript = $@"
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
@@ -205,6 +327,7 @@ if($portObject) {{
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $address={PowerShellRunner.Quote(mapping.DirectAddress)}
 $deviceUuid={PowerShellRunner.Quote(mapping.DeviceUuid)}
+$adopted={(mapping.UseExistingQueue ? "$true" : "$false")}
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 $problems = @()
 if(-not $p) {{ $problems += 'Direkte Windows-Druckerqueue fehlt.' }}
@@ -220,6 +343,7 @@ $target = if(-not [string]::IsNullOrWhiteSpace($address)) {{
 [pscustomobject]@{{
   Ready = ($problems.Count -eq 0)
   Detail = 'Modus={mapping.TransportMode}; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
+           '; Queue-Typ=' + $(if($adopted){{'vorhandene Windows-Queue übernommen'}}else{{'von SimplePrint angelegt'}}) +
            '; Ziel=' + $target
   Problems = @($problems)
   Warnings = @($problems)
