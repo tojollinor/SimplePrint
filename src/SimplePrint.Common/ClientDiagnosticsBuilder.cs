@@ -249,6 +249,11 @@ Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber
 Get-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4Connectivity,IPv6Connectivity -AutoSize | Out-String
 '=== CLIENT AGENT ==='
 Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue | Format-List * | Out-String
+'=== WSD DISCOVERY SERVICES ==='
+Get-Service -Name fdPHost,FDResPub -ErrorAction SilentlyContinue | Format-Table Name,Status,StartType -AutoSize | Out-String
+'=== WSD DISCOVERY FIREWALL ==='
+Get-NetFirewallRule -Name 'SimplePrint-WSD-*' -ErrorAction SilentlyContinue | Select-Object Name,DisplayName,Enabled,Profile,Direction,Action | Format-Table -AutoSize | Out-String
+Get-NetFirewallRule -Name 'SimplePrint-WSD-*' -ErrorAction SilentlyContinue | Get-NetFirewallPortFilter | Format-Table Protocol,LocalPort,RemotePort -AutoSize | Out-String
 '=== PRINTERS ==='
 Get-Printer | Format-Table Name,DriverName,PortName,PrinterStatus,Comment -AutoSize | Out-String
 '=== PORTS ==='
