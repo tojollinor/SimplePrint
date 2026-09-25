@@ -53,7 +53,7 @@ jobs:
             gh release create $tag `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: stops refreshing Available Printers on every tab switch, prefers directed IPP for WSD printers when the server can resolve their device IP, and requests UAC only when Windows actually requires elevation for printer installation."
+              --notes "SimplePrint ${version}: resolves WSD printers through Windows DAFWSDProvider LocationInformation, enriches server routes automatically at service startup, improves printer-route diagnostics, and suppresses PowerShell CLIXML progress noise."
           }
 
           foreach ($installer in $installers) {
