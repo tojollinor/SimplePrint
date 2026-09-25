@@ -856,6 +856,7 @@ public sealed class MainForm : Form
             $"Agent-Version: {client.AgentVersion}",
             $"Protokoll: {client.ProtocolVersion} ({(client.ProtocolVersion == Protocol.Version ? "kompatibel" : $"Server benötigt {Protocol.Version}")})",
             $"Installierte SimplePrint-Drucker: {client.InstalledPrinterCount}",
+            $"Remote-Diagnose: {(client.DiagnosticsPort > 0 ? $"TCP {client.DiagnosticsPort}" : "nicht unterstützt")}",
             "",
             "Letzte Druckaufträge:"
         };
