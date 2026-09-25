@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Text;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -21,6 +23,15 @@ public sealed record ReleaseUpdateInfo(
     long InstallerSize,
     string? Sha256,
     string? Notes);
+
+public sealed record UpdateApplyRequest(
+    ReleaseUpdateInfo Release,
+    string TargetExecutablePath,
+    string UpdaterDirectory);
+
+public sealed record PreparedUpdateHost(
+    string ExecutablePath,
+    string RequestPath);
 
 public static class GitHubUpdateService
 {
@@ -224,6 +235,181 @@ public static class GitHubUpdateService
         File.Move(temporaryPath, targetPath, true);
         progress?.Report(100);
         return targetPath;
+    }
+
+    public static void LaunchElevatedBootstrap(string executablePath)
+    {
+        if (!File.Exists(executablePath))
+            throw new FileNotFoundException("Die SimplePrint-Anwendung wurde nicht gefunden.", executablePath);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = executablePath,
+            UseShellExecute = true,
+            Verb = "runas"
+        };
+        psi.ArgumentList.Add("--bootstrap-update");
+
+        try
+        {
+            Process.Start(psi)
+                ?? throw new InvalidOperationException("Der administrative Update-Prozess konnte nicht gestartet werden.");
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            throw new OperationCanceledException("Die Administratorfreigabe wurde abgebrochen.", ex);
+        }
+    }
+
+    public static async Task<PreparedUpdateHost> PrepareDetachedUpdateHostAsync(
+        Version currentVersion,
+        SimplePrintComponent component,
+        string installedExecutablePath,
+        CancellationToken cancellationToken = default)
+    {
+        var release = await CheckAsync(currentVersion, component, cancellationToken)
+            ?? throw new InvalidOperationException("Das angebotene Update ist nicht mehr verfügbar.");
+
+        var executableDirectory = Path.GetDirectoryName(installedExecutablePath)
+            ?? throw new InvalidOperationException("Das Installationsverzeichnis konnte nicht ermittelt werden.");
+
+        var componentDirectory = Directory.GetParent(executableDirectory)?.FullName
+            ?? throw new InvalidOperationException("Das SimplePrint-Komponentenverzeichnis konnte nicht ermittelt werden.");
+
+        var appRoot = Directory.GetParent(componentDirectory)?.FullName
+            ?? throw new InvalidOperationException("Das SimplePrint-Installationsverzeichnis konnte nicht ermittelt werden.");
+
+        var updaterDirectory = Path.Combine(
+            appRoot,
+            "UpdaterTemp",
+            Guid.NewGuid().ToString("N"));
+
+        Directory.CreateDirectory(updaterDirectory);
+
+        var updaterExecutablePath = Path.Combine(
+            updaterDirectory,
+            Path.GetFileName(installedExecutablePath));
+
+        File.Copy(installedExecutablePath, updaterExecutablePath, overwrite: true);
+
+        var request = new UpdateApplyRequest(
+            release,
+            installedExecutablePath,
+            updaterDirectory);
+
+        var requestPath = Path.Combine(updaterDirectory, "update-request.json");
+        await File.WriteAllTextAsync(
+            requestPath,
+            JsonSerializer.Serialize(request, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                WriteIndented = true
+            }),
+            new UTF8Encoding(false),
+            cancellationToken);
+
+        return new PreparedUpdateHost(updaterExecutablePath, requestPath);
+    }
+
+    public static void LaunchDetachedUpdateHost(PreparedUpdateHost host)
+    {
+        if (!File.Exists(host.ExecutablePath) || !File.Exists(host.RequestPath))
+            throw new InvalidOperationException("Der vorbereitete Update-Prozess ist unvollständig.");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = host.ExecutablePath,
+            UseShellExecute = false
+        };
+        psi.ArgumentList.Add("--apply-update");
+        psi.ArgumentList.Add(host.RequestPath);
+
+        Process.Start(psi)
+            ?? throw new InvalidOperationException("Der Update-Prozess konnte nicht gestartet werden.");
+    }
+
+    public static UpdateApplyRequest LoadUpdateRequest(string requestPath)
+    {
+        if (!File.Exists(requestPath))
+            throw new FileNotFoundException("Die Update-Anforderung wurde nicht gefunden.", requestPath);
+
+        var request = JsonSerializer.Deserialize<UpdateApplyRequest>(
+            File.ReadAllText(requestPath),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        return request
+            ?? throw new InvalidDataException("Die Update-Anforderung ist ungültig.");
+    }
+
+    public static async Task<int> InstallSilentlyAsync(
+        string installerPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(installerPath))
+            throw new FileNotFoundException("Der Update-Installer wurde nicht gefunden.", installerPath);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = installerPath,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        foreach (var argument in new[]
+        {
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/CLOSEAPPLICATIONS",
+            "/NORESTARTAPPLICATIONS",
+            "/SP-"
+        })
+        {
+            psi.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("Der stille Update-Installer konnte nicht gestartet werden.");
+
+        await process.WaitForExitAsync(cancellationToken);
+        return process.ExitCode;
+    }
+
+    public static void RelaunchAfterSuccessfulUpdate(UpdateApplyRequest request)
+    {
+        if (!File.Exists(request.TargetExecutablePath))
+            throw new FileNotFoundException(
+                "Die aktualisierte SimplePrint-Anwendung wurde nicht gefunden.",
+                request.TargetExecutablePath);
+
+        var version = request.Release.TagName;
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = $"\"{request.TargetExecutablePath}\" --update-success \"{version}\"",
+            UseShellExecute = true
+        });
+    }
+
+    public static void ScheduleUpdaterCleanup(UpdateApplyRequest request)
+    {
+        try
+        {
+            var command =
+                $"ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"{request.UpdaterDirectory}\"";
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/d /c " + command,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+        }
+        catch
+        {
+        }
     }
 
     public static void LaunchInstaller(string installerPath)
