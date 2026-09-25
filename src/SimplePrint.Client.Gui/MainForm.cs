@@ -41,6 +41,13 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Branding.ApplyApplicationIcon(this);
 
+        if (Program.StartInTray)
+        {
+            ShowInTaskbar = false;
+            WindowState = FormWindowState.Minimized;
+            Opacity = 0;
+        }
+
         var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 132, Padding = new Padding(10), ColumnCount = 2, RowCount = 1 };
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -132,8 +139,23 @@ public sealed class MainForm : Form
 
         Shown += async (_, _) =>
         {
+            if (Program.StartInTray)
+            {
+                HideToTray();
+                Opacity = 1;
+            }
+
             await RefreshAllAsync();
-            if (Program.StartInTray) HideToTray();
+
+            if (!string.IsNullOrWhiteSpace(Program.UpdateSuccessVersion))
+            {
+                MessageBox.Show(
+                    $"SimplePrint wurde erfolgreich auf {Program.UpdateSuccessVersion} aktualisiert.",
+                    "Update erfolgreich",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+
             _ = CheckForUpdatesAsync(false);
         };
     }
