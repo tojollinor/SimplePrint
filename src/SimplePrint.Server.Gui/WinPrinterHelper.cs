@@ -25,23 +25,52 @@ $items = @(Get-Printer | ForEach-Object {
     if($port.PSObject.Properties['PortNumber'] -and $port.PortNumber) { $portNumber = [int]$port.PortNumber }
   }
 
+  $isWsdPort = ([string]$p.PortName).StartsWith('WSD-',[System.StringComparison]::OrdinalIgnoreCase)
+
+  if($isWsdPort -and
+     ([string]::IsNullOrWhiteSpace($deviceUrl) -or [string]::IsNullOrWhiteSpace($deviceUuid))) {
+    $wsdKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\WSD Port\Ports\' + [string]$p.PortName
+
+    if(Test-Path -LiteralPath $wsdKey) {
+      $wsd = Get-ItemProperty -LiteralPath $wsdKey -ErrorAction SilentlyContinue
+
+      if($wsd) {
+        if([string]::IsNullOrWhiteSpace($deviceUuid) -and $wsd.PSObject.Properties['Printer UUID']) {
+          $deviceUuid = [string]$wsd.'Printer UUID'
+        }
+
+        foreach($property in $wsd.PSObject.Properties) {
+          if($property.Name -match '^PS(Path|ParentPath|ChildName|Drive|Provider)$') { continue }
+
+          $value = [string]$property.Value
+          if([string]::IsNullOrWhiteSpace($value)) { continue }
+
+          if([string]::IsNullOrWhiteSpace($deviceUuid) -and
+             $value -match '(?i)urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}') {
+            $deviceUuid = $Matches[0]
+          }
+
+          if([string]::IsNullOrWhiteSpace($deviceUrl) -and
+             $value -match '^(?i)(https?|ipps?)://') {
+            $deviceUrl = $value
+          }
+        }
+      }
+    }
+  }
+
   $transportMode = 'Tunnel'
   $directAddress = ''
 
   if([string]$p.DriverName -match 'Microsoft IPP Class Driver') {
-    $isWsdPort = ([string]$p.PortName).StartsWith('WSD-',[System.StringComparison]::OrdinalIgnoreCase)
-
     if($isWsdPort -and
        (-not [string]::IsNullOrWhiteSpace($deviceUrl) -or
         -not [string]::IsNullOrWhiteSpace($deviceUuid))) {
-      # WSD ports do not always expose DeviceURL through Get-PrinterPort.
-      # DeviceUUID is an equally valid Windows discovery target.
       $transportMode = 'Wsd'
       $directAddress = $deviceUrl
     }
     elseif(-not [string]::IsNullOrWhiteSpace($deviceUrl)) {
       $directAddress = $deviceUrl
-      # IPP directed discovery may expose http/https as well as ipp/ipps URLs.
       $transportMode = 'Ipp'
     }
     elseif(-not [string]::IsNullOrWhiteSpace($hostAddress) -and
@@ -268,6 +297,18 @@ Get-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4
 Get-Printer | Format-Table Name,DriverName,PortName,PrinterStatus,JobCount -AutoSize | Out-String
 '=== PRINTER PORTS ==='
 Get-PrinterPort | Select-Object Name,PrinterHostAddress,PortNumber,DeviceURL,DeviceUUID,SNMPEnabled,SNMPCommunity | Format-Table -AutoSize | Out-String
+'=== WSD PORT REGISTRY ==='
+$wsdRoot = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\WSD Port\Ports'
+if(Test-Path -LiteralPath $wsdRoot) {
+  Get-ChildItem -LiteralPath $wsdRoot -ErrorAction SilentlyContinue | ForEach-Object {
+    '--- ' + $_.PSChildName + ' ---'
+    Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue |
+      Select-Object * -ExcludeProperty PSPath,PSParentPath,PSChildName,PSDrive,PSProvider |
+      Format-List | Out-String
+  }
+} else {
+  'WSD-Port-Registrypfad nicht vorhanden.'
+}
 '=== FIREWALL RULES ==='
 Get-NetFirewallRule -DisplayName 'SimplePrint*' -ErrorAction SilentlyContinue | Select-Object Name,DisplayName,Enabled,Profile,Direction,Action | Format-Table -AutoSize | Out-String
 '=== FIREWALL PORT FILTERS ==='

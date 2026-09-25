@@ -66,7 +66,29 @@ if ($Mode -eq 'Server') {
 
 if ($Mode -eq 'Client') {
   $exe = Join-Path $AppPath 'Client\Service\SimplePrint.Client.Service.exe'
-  Ensure-Service 'SimplePrintClient' 'SimplePrint Client Agent' $exe 'Findet SimplePrint-Server automatisch und tunnelt lokale RAW-Druckjobs ohne Rendering.'
+  Ensure-Service 'SimplePrintClient' 'SimplePrint Client Agent' $exe 'Findet SimplePrint-Server automatisch, tunnelt lokale RAW-Druckjobs und stellt Diagnosepakete für den zugeordneten SimplePrint-Server bereit.'
+
+  Get-NetFirewallRule -Name 'SimplePrint-ClientDiagnostics' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+  Get-NetFirewallRule -DisplayName 'SimplePrint Client Diagnostics' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+
+  New-NetFirewallRule -Name 'SimplePrint-ClientDiagnostics' -DisplayName 'SimplePrint Client Diagnostics' -Description 'Erlaubt dem zugeordneten SimplePrint-Server den Abruf eines Client-Diagnosepakets im lokalen Netzwerk.' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 45882 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+
+  $rule = Get-NetFirewallRule -Name 'SimplePrint-ClientDiagnostics' -ErrorAction Stop
+  $port = $rule | Get-NetFirewallPortFilter
+  $address = $rule | Get-NetFirewallAddressFilter
+  $profile = [string]$rule.Profile
+  $remote = @($address.RemoteAddress) -join ','
+
+  if([string]$rule.Enabled -ne 'True' -or
+     [string]$rule.Direction -ne 'Inbound' -or
+     [string]$rule.Action -ne 'Allow' -or
+     $profile -notmatch 'Private' -or
+     $profile -notmatch 'Domain' -or
+     $profile -match 'Public' -or
+     [string]$port.LocalPort -ne '45882' -or
+     $remote -notmatch 'LocalSubnet') {
+    throw 'Firewallregel SimplePrint-ClientDiagnostics konnte nicht korrekt eingerichtet werden.'
+  }
 }
 
 # Migration von 0.2.1 und älter: Bis 0.2.1 gab es einen gemeinsamen Installer.

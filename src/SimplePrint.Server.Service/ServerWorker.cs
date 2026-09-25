@@ -257,6 +257,7 @@ public sealed class ServerWorker : BackgroundService
                     ProtocolVersion = heartbeat.Version,
                     PreferredServerId = heartbeat.PreferredServerId,
                     InstalledPrinterCount = heartbeat.InstalledPrinterCount,
+                    DiagnosticsPort = heartbeat.DiagnosticsPort,
                     LastSeen = DateTimeOffset.Now
                 };
 

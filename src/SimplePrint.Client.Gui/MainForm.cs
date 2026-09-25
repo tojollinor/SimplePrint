@@ -78,7 +78,6 @@ public sealed class MainForm : Form
         var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
         bottom.Controls.Add(MakeButton("Server suchen", async (_, _) => await RefreshAllAsync()));
         bottom.Controls.Add(MakeButton("Verbindung testen", async (_, _) => await TestConnectionsAsync()));
-        bottom.Controls.Add(MakeButton("Diagnosepaket", async (_, _) => await CreateDiagnosticsAsync()));
         bottom.Controls.Add(MakeButton("Über", (_, _) => ShowAbout()));
 
         var statusStrip = new StatusStrip { SizingGrip = false };
@@ -95,6 +94,7 @@ public sealed class MainForm : Form
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("SimplePrint Client öffnen", null, (_, _) => ShowFromTray());
         trayMenu.Items.Add("Server suchen", null, async (_, _) => await RefreshAllAsync());
+        trayMenu.Items.Add("Nach Updates suchen", null, async (_, _) => await CheckForUpdatesAsync(true));
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Beenden", null, (_, _) => ExitApplication());
         _tray = new NotifyIcon
@@ -308,6 +308,24 @@ public sealed class MainForm : Form
         buttons.Controls.Add(MakeButton("Autostart deaktivieren", async (_, _) => await SetStartupAsync(false)));
         buttons.Controls.Add(MakeButton("Nach Updates suchen", async (_, _) => await CheckForUpdatesAsync(true)));
         panel.Controls.Add(buttons);
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Margin = new Padding(0, 18, 0, 4),
+            Font = new Font(Font, FontStyle.Bold),
+            Text = "Diagnose"
+        });
+
+        var diagnosticsButtons = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = false,
+            Margin = new Padding(0, 4, 0, 0)
+        };
+        diagnosticsButtons.Controls.Add(
+            MakeButton("Diagnosepaket erstellen", async (_, _) => await CreateDiagnosticsAsync()));
+        panel.Controls.Add(diagnosticsButtons);
 
         tab.Controls.Add(panel);
         return tab;
@@ -1332,92 +1350,40 @@ public sealed class MainForm : Form
 
     private async Task CreateDiagnosticsAsync()
     {
-        using var save = new SaveFileDialog { Filter = "ZIP-Datei|*.zip", FileName = $"SimplePrint-Client-Diagnose-{DateTime.Now:yyyyMMdd-HHmmss}.zip" };
-        if (save.ShowDialog(this) != DialogResult.OK) return;
+        using var save = new SaveFileDialog
+        {
+            Filter = "ZIP-Datei|*.zip",
+            FileName = $"SimplePrint-Client-Diagnose-{DateTime.Now:yyyyMMdd-HHmmss}.zip"
+        };
+
+        if (save.ShowDialog(this) != DialogResult.OK)
+            return;
+
         try
         {
             SetBusy("Diagnosepaket wird erstellt …");
-            using var zip = ZipFile.Open(save.FileName, ZipArchiveMode.Create);
-            if (File.Exists(AppPaths.ClientConfig)) zip.CreateEntryFromFile(AppPaths.ClientConfig, "config.json", CompressionLevel.Optimal);
-            if (File.Exists(AppPaths.ClientLog)) zip.CreateEntryFromFile(AppPaths.ClientLog, "client.log", CompressionLevel.Optimal);
-            if (File.Exists(AppPaths.ClientJobs)) zip.CreateEntryFromFile(AppPaths.ClientJobs, "jobs.json", CompressionLevel.Optimal);
 
-            var e = zip.CreateEntry("diagnostics.txt");
-            await using (var stream = e.Open())
-            await using (var w = new StreamWriter(stream))
-            {
-                await w.WriteAsync(await PrinterInstaller.GetDiagnosticsAsync());
-            }
+            var archive = await ClientDiagnosticsBuilder.CreateArchiveAsync(
+                _config,
+                _servers);
 
-            var discovery = zip.CreateEntry("discovery.txt");
-            await using (var stream = discovery.Open())
-            await using (var dw = new StreamWriter(stream))
-            {
-                foreach (var server in _servers)
-                    await dw.WriteLineAsync(
-                        $"{server.Announcement.ServerName} {server.Address}:{server.Announcement.GatewayPort} " +
-                        $"app={server.Announcement.AppVersion} protocol={server.Announcement.Version} " +
-                        $"compatible={server.Announcement.Version == Protocol.Version} " +
-                        $"id={server.Announcement.ServerId} printers={server.Announcement.Printers.Count}");
-            }
-
-            var healthResults = new List<PrinterHealthStatus>();
-
-            foreach (var mapping in _config.Mappings)
-            {
-                try
-                {
-                    var local = await PrinterInstaller.GetLocalReadinessAsync(mapping);
-                    var health = await QueryServerPrinterHealthAsync(mapping);
-
-                    health.ClientTransportStatus = local.Detail;
-                    health.ServerTransportStatus =
-                        $"Server '{mapping.ServerName}' · Protokoll {Protocol.Version}";
-
-                    foreach (var warning in local.Warnings)
-                    {
-                        if (!health.Warnings.Contains(warning, StringComparer.OrdinalIgnoreCase))
-                            health.Warnings.Add(warning);
-                    }
-
-                    if (!local.Ready)
-                    {
-                        health.Level = "Red";
-                        health.Summary = "Lokale Client-Druckkette nicht vollständig funktionsfähig.";
-                    }
-
-                    healthResults.Add(health);
-                }
-                catch (Exception ex)
-                {
-                    healthResults.Add(new PrinterHealthStatus
-                    {
-                        PrinterId = mapping.PrinterId,
-                        PrinterName = mapping.LocalPrinterName,
-                        Level = "Red",
-                        Summary = "End-to-End-Prüfung fehlgeschlagen.",
-                        Warnings = [ex.Message]
-                    });
-                }
-            }
-
-            var healthEntry = zip.CreateEntry("printer-health.json");
-            await using (var stream = healthEntry.Open())
-            await using (var hw = new StreamWriter(stream))
-            {
-                await hw.WriteAsync(
-                    JsonSerializer.Serialize(
-                        healthResults,
-                        JsonStore.Options));
-            }
+            await File.WriteAllBytesAsync(save.FileName, archive);
 
             SetStatus("✓ Diagnosepaket wurde erstellt.");
-            MessageBox.Show("Diagnosepaket wurde erstellt.");
+            MessageBox.Show(
+                "Diagnosepaket wurde erstellt.",
+                "SimplePrint Diagnose",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
             SetStatus("✗ Diagnosepaket konnte nicht erstellt werden.");
-            MessageBox.Show(ex.Message, "Diagnose", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(
+                ex.Message,
+                "Diagnose",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
         }
     }
 

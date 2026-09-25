@@ -13,7 +13,8 @@ public sealed class ClientWorker : BackgroundService
         int GatewayPort,
         DateTimeOffset SeenAt,
         string ServerName,
-        int ProtocolVersion);
+        int ProtocolVersion,
+        string AppVersion);
 
     private sealed class ListenerState
     {
@@ -28,6 +29,7 @@ public sealed class ClientWorker : BackgroundService
     private readonly ConcurrentDictionary<Guid, PrintJobRecord> _jobs = new();
     private readonly Dictionary<string, ListenerState> _listeners = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _jobSaveLock = new(1, 1);
+    private readonly SemaphoreSlim _diagnosticsLock = new(1, 1);
     private readonly object _sync = new();
 
     private ClientConfig _config = new();
@@ -44,7 +46,8 @@ public sealed class ClientWorker : BackgroundService
 
         await Task.WhenAll(
             DiscoveryLoopAsync(stoppingToken),
-            ReloadLoopAsync(stoppingToken));
+            ReloadLoopAsync(stoppingToken),
+            DiagnosticsLoopAsync(stoppingToken));
     }
 
     private void LoadConfig(bool force = false)
@@ -144,7 +147,8 @@ public sealed class ClientWorker : BackgroundService
                     ? "unbekannt"
                     : $"{version.Major}.{version.Minor}.{version.Build}",
                 PreferredServerId = _config.PreferredServerId,
-                InstalledPrinterCount = _config.Mappings.Count(x => x.Enabled)
+                InstalledPrinterCount = _config.Mappings.Count(x => x.Enabled),
+                DiagnosticsPort = Protocol.DefaultClientDiagnosticsPort
             };
 
             await Discovery.SendClientHeartbeatAsync(
@@ -179,7 +183,8 @@ public sealed class ClientWorker : BackgroundService
                     server.Announcement.GatewayPort,
                     server.SeenAt,
                     server.Announcement.ServerName,
-                    server.Announcement.Version);
+                    server.Announcement.Version,
+                    server.Announcement.AppVersion);
             }
         }
         catch (OperationCanceledException)
@@ -188,6 +193,123 @@ public sealed class ClientWorker : BackgroundService
         catch (Exception ex)
         {
             _log.Error("Discovery fehlgeschlagen", ex);
+        }
+    }
+
+    private async Task DiagnosticsLoopAsync(CancellationToken ct)
+    {
+        var listener = new TcpListener(IPAddress.Any, Protocol.DefaultClientDiagnosticsPort);
+        listener.Start(8);
+
+        _log.Info($"Client-Diagnose lauscht auf TCP {Protocol.DefaultClientDiagnosticsPort}.");
+
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var client = await listener.AcceptTcpClientAsync(ct);
+                _ = Task.Run(
+                    () => HandleDiagnosticsRequestAsync(client, ct),
+                    CancellationToken.None);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    private async Task HandleDiagnosticsRequestAsync(
+        TcpClient client,
+        CancellationToken serviceCt)
+    {
+        using (client)
+        {
+            await _diagnosticsLock.WaitAsync(serviceCt);
+            try
+            {
+                client.NoDelay = true;
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(serviceCt);
+                timeout.CancelAfter(TimeSpan.FromSeconds(75));
+                using var stream = client.GetStream();
+
+                var request = new byte[Protocol.DiagnosticsRequestLength];
+                if (!await Protocol.ReadExactAsync(stream, request, timeout.Token) ||
+                    !Protocol.TryParseDiagnosticsRequest(request, out var serverId))
+                    return;
+
+                var authorized =
+                    _servers.TryGetValue(serverId, out var endpoint) &&
+                    DateTimeOffset.Now - endpoint.SeenAt <= TimeSpan.FromMinutes(2) &&
+                    (_config.PreferredServerId is null ||
+                     _config.PreferredServerId == serverId);
+
+                if (!authorized)
+                {
+                    await Protocol.WriteDiagnosticsErrorAsync(
+                        stream,
+                        "Diagnoseabruf abgelehnt: Der anfragende Server ist diesem Client nicht aktuell zugeordnet.",
+                        timeout.Token);
+                    return;
+                }
+
+                var discovered = _servers
+                    .Select(x => new DiscoveredServer(
+                        new DiscoveryAnnouncement
+                        {
+                            ServerId = x.Key,
+                            ServerName = x.Value.ServerName,
+                            GatewayPort = x.Value.GatewayPort,
+                            Version = x.Value.ProtocolVersion,
+                            AppVersion = x.Value.AppVersion
+                        },
+                        x.Value.Address,
+                        x.Value.SeenAt))
+                    .ToList();
+
+                _log.Info($"Vollständiges Diagnosepaket für Server {serverId} wird erstellt.");
+
+                var archive = await ClientDiagnosticsBuilder.CreateArchiveAsync(
+                    _config,
+                    discovered,
+                    timeout.Token);
+
+                await Protocol.WriteDiagnosticsArchiveAsync(
+                    stream,
+                    archive,
+                    timeout.Token);
+
+                _log.Info($"Diagnosepaket mit {archive.Length:N0} Byte an Server übertragen.");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Remote-Diagnose fehlgeschlagen", ex);
+
+                try
+                {
+                    if (client.Connected)
+                    {
+                        using var stream = client.GetStream();
+                        await Protocol.WriteDiagnosticsErrorAsync(
+                            stream,
+                            ex.Message,
+                            CancellationToken.None);
+                    }
+                }
+                catch
+                {
+                }
+            }
+            finally
+            {
+                _diagnosticsLock.Release();
+            }
         }
     }
 

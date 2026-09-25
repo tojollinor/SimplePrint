@@ -85,6 +85,7 @@ public sealed class ClientHeartbeat
     public string AgentVersion { get; set; } = "";
     public Guid? PreferredServerId { get; set; }
     public int InstalledPrinterCount { get; set; }
+    public int DiagnosticsPort { get; set; }
 }
 
 public sealed class ClientPresence
@@ -96,6 +97,7 @@ public sealed class ClientPresence
     public int ProtocolVersion { get; set; }
     public Guid? PreferredServerId { get; set; }
     public int InstalledPrinterCount { get; set; }
+    public int DiagnosticsPort { get; set; }
     public DateTimeOffset LastSeen { get; set; }
 }
 
