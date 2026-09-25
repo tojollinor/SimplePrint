@@ -43,6 +43,13 @@ public sealed class MainForm : Form
         MinimumSize = new Size(560, 440);
         StartPosition = FormStartPosition.CenterScreen;
         Branding.ApplyApplicationIcon(this);
+
+        if (Program.StartInTray)
+        {
+            ShowInTaskbar = false;
+            WindowState = FormWindowState.Minimized;
+            Opacity = 0;
+        }
         _printers.ItemCheck += Printers_ItemCheck;
         _printers.MouseDown += Printers_MouseDown;
 
@@ -131,8 +138,23 @@ public sealed class MainForm : Form
 
         Shown += async (_, _) =>
         {
+            if (Program.StartInTray)
+            {
+                HideToTray();
+                Opacity = 1;
+            }
+
             await RefreshAllAsync();
-            if (Program.StartInTray) HideToTray();
+
+            if (!string.IsNullOrWhiteSpace(Program.UpdateSuccessVersion))
+            {
+                MessageBox.Show(
+                    $"SimplePrint wurde erfolgreich auf {Program.UpdateSuccessVersion} aktualisiert.",
+                    "Update erfolgreich",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+
             _ = CheckForUpdatesAsync(false);
         };
     }

@@ -249,10 +249,22 @@ Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber
 Get-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4Connectivity,IPv6Connectivity -AutoSize | Out-String
 '=== CLIENT AGENT ==='
 Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue | Format-List * | Out-String
-'=== SIMPLEPRINT PRINTERS ==='
-Get-Printer | Where-Object { $_.PortName -Like 'SimplePrint_*' -or $_.Name -Like '* (SimplePrint)*' -or $_.Comment -Like 'SimplePrint:*' } | Format-Table Name,DriverName,PortName,PrinterStatus,Comment -AutoSize | Out-String
+'=== PRINTERS ==='
+Get-Printer | Format-Table Name,DriverName,PortName,PrinterStatus,Comment -AutoSize | Out-String
 '=== PORTS ==='
-Get-PrinterPort | Where-Object { $_.Name -Like 'SimplePrint_*' -or $_.Name -Like 'WSD-*' } | Select-Object Name,PrinterHostAddress,PortNumber,DeviceURL,DeviceUUID,SNMPEnabled | Format-Table -AutoSize | Out-String
+Get-PrinterPort | Select-Object Name,PrinterHostAddress,PortNumber,DeviceURL,DeviceUUID,SNMPEnabled | Format-Table -AutoSize | Out-String
+'=== WSD PORT REGISTRY ==='
+$wsdRoot = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\WSD Port\Ports'
+if(Test-Path -LiteralPath $wsdRoot) {
+  Get-ChildItem -LiteralPath $wsdRoot -ErrorAction SilentlyContinue | ForEach-Object {
+    '--- ' + $_.PSChildName + ' ---'
+    Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue |
+      Select-Object * -ExcludeProperty PSPath,PSParentPath,PSChildName,PSDrive,PSProvider |
+      Format-List | Out-String
+  }
+} else {
+  'WSD-Port-Registrypfad nicht vorhanden.'
+}
 '=== CLIENT DIAGNOSTICS LISTENER ==='
 Get-NetTCPConnection -State Listen -LocalPort 45882 -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String
 '=== CLIENT DIAGNOSTICS FIREWALL ==='

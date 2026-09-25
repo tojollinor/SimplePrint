@@ -174,6 +174,7 @@ if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{
 $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $address={PowerShellRunner.Quote(mapping.DirectAddress)}
 $deviceUuid={PowerShellRunner.Quote(mapping.DeviceUuid)}
+$driver={PowerShellRunner.Quote(mapping.DriverName)}
 $tag={PowerShellRunner.Quote($"SimplePrint:{mapping.ServerId:N}:{mapping.PrinterId:N}")}
 
 $existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
@@ -191,45 +192,124 @@ if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison
     Add-Printer -Name $printer -DeviceURL $address -Comment $tag -ErrorAction Stop
   }}
   elseif(-not [string]::IsNullOrWhiteSpace($deviceUuid)) {{
-    $rawUuid = $deviceUuid.Trim()
-    $uuidText = $rawUuid
-    if($uuidText.StartsWith('urn:uuid:', [System.StringComparison]::OrdinalIgnoreCase)) {{
-      $uuidText = $uuidText.Substring(9)
+    function Normalize-Uuid([string]$value) {{
+      if([string]::IsNullOrWhiteSpace($value)) {{ return '' }}
+      $v = $value.Trim()
+      if($v.StartsWith('urn:uuid:', [System.StringComparison]::OrdinalIgnoreCase)) {{
+        $v = $v.Substring(9)
+      }}
+
+      $g = [Guid]::Empty
+      if([Guid]::TryParse($v, [ref]$g)) {{ return $g.ToString('D') }}
+      return $v.ToLowerInvariant()
     }}
 
+    function Find-MatchingWsdPort([string]$targetUuid) {{
+      $normalizedTarget = Normalize-Uuid $targetUuid
+      if([string]::IsNullOrWhiteSpace($normalizedTarget)) {{ return $null }}
+
+      foreach($port in @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object Name -Like 'WSD-*')) {{
+        $localUuid = ''
+        if($port.PSObject.Properties['DeviceUUID']) {{
+          $localUuid = [string]$port.DeviceUUID
+        }}
+
+        if([string]::IsNullOrWhiteSpace($localUuid)) {{
+          $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\WSD Port\Ports\' + [string]$port.Name
+          if(Test-Path -LiteralPath $key) {{
+            $wsd = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
+            if($wsd -and $wsd.PSObject.Properties['Printer UUID']) {{
+              $localUuid = [string]$wsd.'Printer UUID'
+            }}
+          }}
+        }}
+
+        if((Normalize-Uuid $localUuid) -eq $normalizedTarget) {{
+          return [string]$port.Name
+        }}
+      }}
+
+      return $null
+    }}
+
+    function Try-CreateFromKnownPort([string]$targetUuid) {{
+      $knownPort = Find-MatchingWsdPort $targetUuid
+      if([string]::IsNullOrWhiteSpace($knownPort)) {{ return $false }}
+
+      if(-not (Get-PrinterDriver -Name $driver -ErrorAction SilentlyContinue)) {{
+        Add-PrinterDriver -Name $driver -ErrorAction SilentlyContinue
+      }}
+
+      try {{
+        Add-Printer -Name $printer -DriverName $driver -PortName $knownPort -Comment $tag -ErrorAction Stop
+        return $true
+      }}
+      catch {{
+        return $false
+      }}
+    }}
+
+    $rawUuid = $deviceUuid.Trim()
+    $uuidText = Normalize-Uuid $rawUuid
     $uuidGuid = [Guid]::Empty
     if(-not [Guid]::TryParse($uuidText, [ref]$uuidGuid)) {{
       throw ('Die vom Server gelieferte WSD-DeviceUUID ist ungültig: ' + $deviceUuid)
     }}
 
-    $candidates = @()
-    if($rawUuid.StartsWith('urn:uuid:', [System.StringComparison]::OrdinalIgnoreCase)) {{
-      $candidates += $rawUuid
-      $candidates += $uuidGuid.ToString()
-    }} else {{
-      $candidates += $uuidGuid.ToString()
-      $candidates += ('urn:uuid:' + $uuidGuid.ToString())
+    $created = Try-CreateFromKnownPort $rawUuid
+
+    if(-not $created) {{
+      $fd = Get-Service -Name fdPHost -ErrorAction SilentlyContinue
+      if($fd -and $fd.Status -ne 'Running') {{
+        Start-Service -Name fdPHost -ErrorAction SilentlyContinue
+      }}
+
+      try {{ & pnputil.exe /scan-devices | Out-Null }} catch {{}}
+      Start-Sleep -Milliseconds 800
+
+      $created = Try-CreateFromKnownPort $rawUuid
     }}
 
+    $candidates = @(
+      $uuidGuid.ToString(),
+      ('urn:uuid:' + $uuidGuid.ToString())
+    ) | Select-Object -Unique
+
     $lastError = $null
-    foreach($candidate in ($candidates | Select-Object -Unique)) {{
-      try {{
-        Add-Printer -Name $printer -DeviceUUID $candidate -Comment $tag -ErrorAction Stop
-        $lastError = $null
-        break
-      }}
-      catch {{
-        $lastError = $_
-        $partial = Get-Printer -Name $printer -ErrorAction SilentlyContinue
-        if($partial) {{
-          Remove-Printer -Name $printer -ErrorAction SilentlyContinue
-          Start-Sleep -Milliseconds 300
+
+    if(-not $created) {{
+      for($round = 0; $round -lt 2 -and -not $created; $round++) {{
+        foreach($candidate in $candidates) {{
+          try {{
+            Add-Printer -Name $printer -DeviceUUID $candidate -Comment $tag -ErrorAction Stop
+            $lastError = $null
+            $created = $true
+            break
+          }}
+          catch {{
+            $lastError = $_
+            $partial = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+            if($partial) {{
+              Remove-Printer -Name $printer -ErrorAction SilentlyContinue
+              Start-Sleep -Milliseconds 300
+            }}
+          }}
+        }}
+
+        if(-not $created) {{
+          Start-Sleep -Milliseconds 1200
+          $created = Try-CreateFromKnownPort $rawUuid
         }}
       }}
     }}
 
-    if($lastError) {{
-      throw ('Windows konnte den WSD-Drucker mit der ermittelten DeviceUUID nicht anlegen. ' + $lastError.Exception.Message)
+    if(-not $created) {{
+      $detail = if($lastError) {{ $lastError.Exception.Message }} else {{ 'Keine passende lokale WSD-Gegenstelle gefunden.' }}
+      throw (
+        'Windows konnte den WSD-Drucker nicht über die vom Server ermittelte DeviceUUID finden. ' +
+        'DeviceUUID: ' + $uuidGuid.ToString() + '. ' +
+        'Der Client hat die WSD-Erkennung automatisch neu angestoßen und vorhandene WSD-Ports geprüft. ' +
+        'Der Drucker muss vom Client im selben Netzwerk per WSD erreichbar sein. Details: ' + $detail)
     }}
   }}
   else {{
