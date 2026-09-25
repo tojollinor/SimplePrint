@@ -23,6 +23,7 @@ public sealed class ServerWorker : BackgroundService
         LoadConfig(true);
         LoadKnownClients();
         LoadKnownJobs();
+        await ResolveConfiguredWsdRoutesAsync();
         await EnsurePrinterSharesAsync();
 
         _log.Info($"Serverdienst gestartet. ServerId={_config.ServerId}, Discovery={_config.DiscoveryPort}, Gateway={_config.GatewayPort}");
@@ -178,6 +179,49 @@ public sealed class ServerWorker : BackgroundService
         }
     }
 
+    private async Task ResolveConfiguredWsdRoutesAsync()
+    {
+        var candidates = SnapshotConfig().Printers
+            .Where(p =>
+                p.Enabled &&
+                string.Equals(
+                    p.TransportMode,
+                    PrinterTransport.Wsd,
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrWhiteSpace(p.DirectAddress) &&
+                !string.IsNullOrWhiteSpace(p.DeviceUuid))
+            .ToList();
+
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var address = await WsdAddressResolver.ResolveAsync(candidate.DeviceUuid);
+                if (string.IsNullOrWhiteSpace(address))
+                    continue;
+
+                lock (_configLock)
+                {
+                    var live = _config.Printers.FirstOrDefault(x => x.Id == candidate.Id);
+                    if (live is null)
+                        continue;
+
+                    live.TransportMode = PrinterTransport.Ipp;
+                    live.DirectAddress = address;
+                }
+
+                _log.Info(
+                    $"WSD-Drucker '{candidate.QueueName}' wird für Clients gerichtet per IPP über {address} veröffentlicht.");
+            }
+            catch (Exception ex)
+            {
+                _log.Error(
+                    $"WSD-Adresse für '{candidate.QueueName}' konnte nicht aufgelöst werden",
+                    ex);
+            }
+        }
+    }
+
     private async Task RunReloadLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -186,7 +230,10 @@ public sealed class ServerWorker : BackgroundService
             LoadConfig();
 
             if (previousWrite != _configWriteUtc)
+            {
+                await ResolveConfiguredWsdRoutesAsync();
                 await EnsurePrinterSharesAsync();
+            }
 
             ApplyOfflineClientDeletions();
             await Task.Delay(1500, ct);
