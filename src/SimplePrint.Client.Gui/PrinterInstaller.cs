@@ -62,7 +62,8 @@ if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison
     Add-Printer -Name $printer -DeviceURL $address -Comment $tag -ErrorAction Stop
   }}
   elseif(-not [string]::IsNullOrWhiteSpace($deviceUuid)) {{
-    $uuidText = $deviceUuid.Trim()
+    $rawUuid = $deviceUuid.Trim()
+    $uuidText = $rawUuid
     if($uuidText.StartsWith('urn:uuid:', [System.StringComparison]::OrdinalIgnoreCase)) {{
       $uuidText = $uuidText.Substring(9)
     }}
@@ -72,7 +73,35 @@ if({(string.Equals(mapping.TransportMode, PrinterTransport.Ipp, StringComparison
       throw ('Die vom Server gelieferte WSD-DeviceUUID ist ungültig: ' + $deviceUuid)
     }}
 
-    Add-Printer -Name $printer -DeviceUUID $uuidGuid -Comment $tag -ErrorAction Stop
+    $candidates = @()
+    if($rawUuid.StartsWith('urn:uuid:', [System.StringComparison]::OrdinalIgnoreCase)) {{
+      $candidates += $rawUuid
+      $candidates += $uuidGuid.ToString()
+    }} else {{
+      $candidates += $uuidGuid.ToString()
+      $candidates += ('urn:uuid:' + $uuidGuid.ToString())
+    }}
+
+    $lastError = $null
+    foreach($candidate in ($candidates | Select-Object -Unique)) {{
+      try {{
+        Add-Printer -Name $printer -DeviceUUID $candidate -Comment $tag -ErrorAction Stop
+        $lastError = $null
+        break
+      }}
+      catch {{
+        $lastError = $_
+        $partial = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+        if($partial) {{
+          Remove-Printer -Name $printer -ErrorAction SilentlyContinue
+          Start-Sleep -Milliseconds 300
+        }}
+      }}
+    }}
+
+    if($lastError) {{
+      throw ('Windows konnte den WSD-Drucker mit der ermittelten DeviceUUID nicht anlegen. ' + $lastError.Exception.Message)
+    }}
   }}
   else {{
     throw 'Für den direkten WSD-Druck wurden weder DeviceURL noch DeviceUUID übermittelt.'
