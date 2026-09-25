@@ -245,8 +245,6 @@ foreach($name in $ruleNames) {
 
 if($wanted.Count -gt 0) {
   New-NetFirewallRule -Name 'SimplePrint-PrintShare-SMB' -DisplayName 'SimplePrint Printer Sharing SMB' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 445 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
-  New-NetFirewallRule -Name 'SimplePrint-PrintShare-RPC' -DisplayName 'SimplePrint Printer Sharing RPC' -Direction Inbound -Action Allow -Enabled True -LocalPort RPC -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
-  New-NetFirewallRule -Name 'SimplePrint-PrintShare-RPCMap' -DisplayName 'SimplePrint Printer Sharing RPC Endpoint Mapper' -Direction Inbound -Action Allow -Enabled True -LocalPort RPCEPMap -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
 }
 ";
 
