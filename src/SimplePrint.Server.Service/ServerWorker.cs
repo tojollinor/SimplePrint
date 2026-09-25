@@ -233,22 +233,20 @@ Set-Printer -Name $p.Name -Shared $true -ShareName {PowerShellRunner.Quote(share
             }
 
             script += @"
-$rules = @(
-  @{ Name='SimplePrint-PrintShare-SMB'; Display='SimplePrint Printer Sharing SMB'; Port='445' },
-  @{ Name='SimplePrint-PrintShare-RPC'; Display='SimplePrint Printer Sharing RPC'; Port='RPC' },
-  @{ Name='SimplePrint-PrintShare-RPCMap'; Display='SimplePrint Printer Sharing RPC Endpoint Mapper'; Port='RPC-EPMap' }
+$ruleNames = @(
+  'SimplePrint-PrintShare-SMB',
+  'SimplePrint-PrintShare-RPC',
+  'SimplePrint-PrintShare-RPCMap'
 )
 
-if($wanted.Count -gt 0) {
-  foreach($rule in $rules) {
-    Get-NetFirewallRule -Name $rule.Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-    New-NetFirewallRule -Name $rule.Name -DisplayName $rule.Display -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort $rule.Port -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
-  }
+foreach($name in $ruleNames) {
+  Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 }
-else {
-  foreach($rule in $rules) {
-    Get-NetFirewallRule -Name $rule.Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-  }
+
+if($wanted.Count -gt 0) {
+  New-NetFirewallRule -Name 'SimplePrint-PrintShare-SMB' -DisplayName 'SimplePrint Printer Sharing SMB' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 445 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+  New-NetFirewallRule -Name 'SimplePrint-PrintShare-RPC' -DisplayName 'SimplePrint Printer Sharing RPC' -Direction Inbound -Action Allow -Enabled True -LocalPort RPC -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+  New-NetFirewallRule -Name 'SimplePrint-PrintShare-RPCMap' -DisplayName 'SimplePrint Printer Sharing RPC Endpoint Mapper' -Direction Inbound -Action Allow -Enabled True -LocalPort RPCEPMap -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
 }
 ";
 
