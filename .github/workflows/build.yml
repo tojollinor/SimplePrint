@@ -53,7 +53,7 @@ jobs:
             gh release create $tag `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: retries WSD discovery and existing-port adoption when DeviceUUID installation initially fails, expands client WSD diagnostics, adds a one-UAC fully silent updater with download/install progress and automatic success restart, and starts the GUI directly hidden in the tray at Windows logon."
+              --notes "SimplePrint ${version}: adds an automatic Windows print-share fallback when a client cannot discover a server-side WSD/IPP printer directly. The server prepares deterministic printer shares plus LocalSubnet-only SMB/RPC firewall rules, while direct WSD/IPP adoption, silent updates, diagnostics and tray startup remain available."
           }
 
           foreach ($installer in $installers) {
