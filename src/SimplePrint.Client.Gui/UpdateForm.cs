@@ -11,7 +11,6 @@ internal sealed class UpdateForm : Form
     private readonly Button _install = new() { Text = "Jetzt aktualisieren", Width = 145, Height = 34 };
     private readonly Button _later = new() { Text = "Später", Width = 95, Height = 34 };
     private readonly Button _releasePage = new() { Text = "Release auf GitHub", Width = 145, Height = 34 };
-    private readonly CancellationTokenSource _downloadCancellation = new();
 
     public bool InstallerStarted { get; private set; }
 
@@ -59,7 +58,7 @@ internal sealed class UpdateForm : Form
             Top = 100,
             Width = 555,
             Height = 44,
-            Text = "Der passende Client-Installer wird direkt aus dem offiziellen GitHub-Release von tojollinor/SimplePrint geladen und anschließend gestartet."
+            Text = "Nach „Jetzt aktualisieren“ folgt zuerst die Administratorfreigabe. Danach werden Download und stille Installation automatisch mit Fortschritt durchgeführt."
         };
 
         var notesLabel = new Label
@@ -103,7 +102,6 @@ internal sealed class UpdateForm : Form
             _status, _progress, _releasePage, _later, _install
         ]);
 
-        FormClosed += (_, _) => _downloadCancellation.Dispose();
     }
 
     private void Install()
