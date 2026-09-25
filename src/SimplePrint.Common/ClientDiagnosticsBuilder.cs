@@ -149,6 +149,7 @@ $svc = Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 $pp = Get-PrinterPort -Name $port -ErrorAction SilentlyContinue
 $listen = Get-NetTCPConnection -State Listen -LocalPort $proxyPort -ErrorAction SilentlyContinue
+$queuePortMatches = ($p -and $p.PortName -eq $port)
 
 $problems = @()
 $warnings = @()
@@ -168,6 +169,7 @@ if($p -and ([string]$p.DriverName -match 'Class Driver|Type1 Class|Type 1 Class|
   Ready = ($problems.Count -eq 0)
   Detail = 'Dienst=' + $(if($svc){{[string]$svc.Status}}else{{'fehlt'}}) +
            '; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
+           '; Queue-Zuordnung=' + $(if($queuePortMatches){{'korrekt'}}elseif($p){{'falsch'}}else{{'nicht prüfbar'}}) +
            '; Port=' + $(if($pp){{'vorhanden'}}else{{'fehlt'}}) +
            '; Proxy=' + $(if($listen){{'lauscht'}}else{{'nicht aktiv'}})
   Problems = @($problems)

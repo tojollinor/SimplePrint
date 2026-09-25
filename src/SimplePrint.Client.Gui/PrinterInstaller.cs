@@ -162,16 +162,24 @@ $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $port={PowerShellRunner.Quote(mapping.PortName)}
 
 $existing = Get-Printer -Name $printer -ErrorAction SilentlyContinue
-if($existing) {{
-  if($existing.PortName -ne $port) {{
-    throw ('Der Drucker ' + $printer + ' verwendet nicht den erwarteten SimplePrint-Port. Er wird aus Sicherheitsgründen nicht gelöscht.')
-  }}
+$removedManagedQueue = $false
+
+if($existing -and $existing.PortName -eq $port) {{
   Remove-Printer -Name $printer -ErrorAction Stop
+  $removedManagedQueue = $true
+}}
+elseif($existing) {{
+  # Die gespeicherte SimplePrint-Zuordnung ist veraltet, die vorhandene Windows-Queue
+  # zeigt inzwischen auf einen anderen Port (z. B. die echte WSD-/IPP-Queue auf einem
+  # Rechner, der zugleich Server und Client ist). Diese fremde/physische Queue niemals
+  # löschen. Nur die veralteten SimplePrint-Artefakte bereinigen.
 }}
 
-for($i=0; $i -lt 10; $i++) {{
-  if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{ break }}
-  Start-Sleep -Milliseconds 250
+if($removedManagedQueue) {{
+  for($i=0; $i -lt 10; $i++) {{
+    if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{ break }}
+    Start-Sleep -Milliseconds 250
+  }}
 }}
 
 $portObject = Get-PrinterPort -Name $port -ErrorAction SilentlyContinue
@@ -180,8 +188,8 @@ if($portObject) {{
     Remove-PrinterPort -Name $port -ErrorAction Stop
   }}
   catch {{
-    # Die Queue ist bereits sicher entfernt. Ein noch kurz gesperrter Proxy-Port
-    # darf den gesamten Entfernen-Vorgang nicht wieder als fehlgeschlagen markieren.
+    # Ein noch kurz gesperrter oder bereits fremd referenzierter Port darf die
+    # sichere Migration nicht abbrechen. Die physische Windows-Queue bleibt unangetastet.
   }}
 }}
 ";
@@ -244,6 +252,7 @@ $svc = Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 $pp = Get-PrinterPort -Name $port -ErrorAction SilentlyContinue
 $listen = Get-NetTCPConnection -State Listen -LocalPort $proxyPort -ErrorAction SilentlyContinue
+$queuePortMatches = ($p -and $p.PortName -eq $port)
 
 $problems = @()
 $warnings = @()
@@ -263,6 +272,7 @@ if($p -and ([string]$p.DriverName -match 'Class Driver|Type1 Class|Type 1 Class|
   Ready = ($problems.Count -eq 0)
   Detail = 'Dienst=' + $(if($svc){{[string]$svc.Status}}else{{'fehlt'}}) +
            '; Queue=' + $(if($p){{'vorhanden'}}else{{'fehlt'}}) +
+           '; Queue-Zuordnung=' + $(if($queuePortMatches){{'korrekt'}}elseif($p){{'falsch'}}else{{'nicht prüfbar'}}) +
            '; Port=' + $(if($pp){{'vorhanden'}}else{{'fehlt'}}) +
            '; Proxy=' + $(if($listen){{'lauscht'}}else{{'nicht aktiv'}})
   Problems = @($problems)
