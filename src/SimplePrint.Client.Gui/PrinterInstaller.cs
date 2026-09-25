@@ -31,12 +31,14 @@ internal static class PrinterInstaller
         string transportMode,
         string directAddress,
         string deviceUuid,
+        string serverPortName,
         string preferredName)
     {
         var script = $@"
 $transport={PowerShellRunner.Quote(transportMode)}
 $targetAddress={PowerShellRunner.Quote(directAddress)}
 $targetUuid={PowerShellRunner.Quote(deviceUuid)}
+$serverPortName={PowerShellRunner.Quote(serverPortName)}
 $preferredName={PowerShellRunner.Quote(preferredName)}
 
 function Normalize-Uuid([string]$value) {{
@@ -90,8 +92,16 @@ Get-Printer | ForEach-Object {{
   }}
 
   $sameDevice = $false
-  if($transport -eq 'Wsd' -and -not [string]::IsNullOrWhiteSpace($normalizedTargetUuid)) {{
-    $sameDevice = ((Normalize-Uuid $localUuid) -eq $normalizedTargetUuid)
+  if($transport -eq 'Wsd') {{
+    $samePort =
+      -not [string]::IsNullOrWhiteSpace($serverPortName) -and
+      ([string]$p.PortName).Equals($serverPortName,[System.StringComparison]::OrdinalIgnoreCase)
+
+    $sameUuid =
+      -not [string]::IsNullOrWhiteSpace($normalizedTargetUuid) -and
+      ((Normalize-Uuid $localUuid) -eq $normalizedTargetUuid)
+
+    $sameDevice = $samePort -or $sameUuid
   }}
   elseif($transport -eq 'Ipp' -and -not [string]::IsNullOrWhiteSpace($targetAddress)) {{
     $sameDevice =
