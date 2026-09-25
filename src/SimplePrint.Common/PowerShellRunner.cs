@@ -7,7 +7,12 @@ public static class PowerShellRunner
 {
     public static async Task<(int ExitCode, string StdOut, string StdErr)> RunAsync(string script, bool hidden = true)
     {
-        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        var wrappedScript =
+            "$ProgressPreference='SilentlyContinue';$InformationPreference='SilentlyContinue';" +
+            Environment.NewLine +
+            script;
+
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(wrappedScript));
         var psi = new ProcessStartInfo
         {
             FileName = "powershell.exe",
