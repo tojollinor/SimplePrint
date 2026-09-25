@@ -17,7 +17,7 @@ public static class PrinterTransport
         string.Equals(mode, Wsd, StringComparison.OrdinalIgnoreCase);
 
     public static string GetWindowsShareName(Guid printerId) =>
-        $"SimplePrint_{printerId.ToString("N")[..8]}";
+        $"SimplePrint-{printerId.ToString("N")[..8]}";
 
     public static string GetWindowsSharePath(string serverAddress, Guid printerId) =>
         $@"\\{serverAddress}\{GetWindowsShareName(printerId)}";
