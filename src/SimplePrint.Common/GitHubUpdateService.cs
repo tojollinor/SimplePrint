@@ -383,12 +383,16 @@ public static class GitHubUpdateService
 
         var version = request.Release.TagName;
 
-        Process.Start(new ProcessStartInfo
+        var psi = new ProcessStartInfo
         {
-            FileName = "explorer.exe",
-            Arguments = $"\"{request.TargetExecutablePath}\" --update-success \"{version}\"",
-            UseShellExecute = true
-        });
+            FileName = request.TargetExecutablePath,
+            UseShellExecute = false
+        };
+        psi.ArgumentList.Add("--update-success");
+        psi.ArgumentList.Add(version);
+
+        Process.Start(psi)
+            ?? throw new InvalidOperationException("SimplePrint konnte nach dem Update nicht neu gestartet werden.");
     }
 
     public static void ScheduleUpdaterCleanup(UpdateApplyRequest request)
