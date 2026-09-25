@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using System.IO.Compression;
 using System.Text.Json;
 using SimplePrint.Common;
@@ -71,7 +72,6 @@ public sealed class MainForm : Form
         tabs.TabPages.Add(CreateSettingsTab());
 
         var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8) };
-        bottom.Controls.Add(MakeButton("Diagnosepaket", async (_, _) => await CreateDiagnosticsAsync()));
         bottom.Controls.Add(MakeButton("Aktualisieren", async (_, _) => await RefreshAllAsync()));
         bottom.Controls.Add(MakeButton("Über", (_, _) => ShowAbout()));
 
@@ -89,6 +89,7 @@ public sealed class MainForm : Form
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("SimplePrint Server öffnen", null, (_, _) => ShowFromTray());
         trayMenu.Items.Add("Aktualisieren", null, async (_, _) => await RefreshAllAsync());
+        trayMenu.Items.Add("Nach Updates suchen", null, async (_, _) => await CheckForUpdatesAsync(true));
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Beenden", null, (_, _) => ExitApplication());
         _tray = new NotifyIcon
@@ -325,6 +326,35 @@ public sealed class MainForm : Form
         buttons.Controls.Add(MakeButton("Serverdienst neu starten", async (_, _) => await RestartServerServiceAsync()));
         buttons.Controls.Add(MakeButton("Nach Updates suchen", async (_, _) => await CheckForUpdatesAsync(true)));
         panel.Controls.Add(buttons);
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Margin = new Padding(0, 18, 0, 4),
+            Font = new Font(Font, FontStyle.Bold),
+            Text = "Diagnose"
+        });
+
+        var diagnosticsButtons = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = true,
+            MaximumSize = new Size(820, 0),
+            Margin = new Padding(0, 4, 0, 0)
+        };
+        diagnosticsButtons.Controls.Add(
+            MakeButton("Server-Diagnosepaket", async (_, _) => await CreateDiagnosticsAsync(false)));
+        diagnosticsButtons.Controls.Add(
+            MakeButton("Vollständiges Diagnosepaket", async (_, _) => await CreateDiagnosticsAsync(true)));
+        panel.Controls.Add(diagnosticsButtons);
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(820, 0),
+            Margin = new Padding(0, 4, 0, 0),
+            Text = "Das vollständige Paket enthält zusätzlich die Diagnosepakete aller aktuell erreichbaren 0.2.6+-Clients. Offline- oder ältere Clients werden im Sammelbericht aufgeführt."
+        });
 
         tab.Controls.Add(panel);
         return tab;
@@ -991,23 +1021,42 @@ public sealed class MainForm : Form
         }
     }
 
-    private async Task CreateDiagnosticsAsync()
+    private async Task CreateDiagnosticsAsync(bool includeClients)
     {
-        using var save = new SaveFileDialog { Filter = "ZIP-Datei|*.zip", FileName = $"SimplePrint-Server-Diagnose-{DateTime.Now:yyyyMMdd-HHmmss}.zip" };
-        if (save.ShowDialog(this) != DialogResult.OK) return;
+        using var save = new SaveFileDialog
+        {
+            Filter = "ZIP-Datei|*.zip",
+            FileName = includeClients
+                ? $"SimplePrint-Gesamtdiagnose-{DateTime.Now:yyyyMMdd-HHmmss}.zip"
+                : $"SimplePrint-Server-Diagnose-{DateTime.Now:yyyyMMdd-HHmmss}.zip"
+        };
+
+        if (save.ShowDialog(this) != DialogResult.OK)
+            return;
+
         try
         {
-            SetBusy("Diagnosepaket wird erstellt …");
+            SetBusy(
+                includeClients
+                    ? "Server- und Client-Diagnosen werden gesammelt …"
+                    : "Server-Diagnosepaket wird erstellt …");
+
             using var zip = ZipFile.Open(save.FileName, ZipArchiveMode.Create);
+
             AddFile(zip, AppPaths.ServerConfig, "config.json");
             AddFile(zip, AppPaths.ServerLog, "server.log");
             AddFile(zip, AppPaths.ServerClients, "clients.json");
             AddFile(zip, AppPaths.ServerJobs, "jobs.json");
-            var e = zip.CreateEntry("diagnostics.txt");
-            using (var w = new StreamWriter(e.Open()))
-                await w.WriteAsync(await WinPrinterHelper.GetDiagnosticsAsync());
+
+            var diagnostics = zip.CreateEntry(
+                "diagnostics.txt",
+                CompressionLevel.Optimal);
+
+            await using (var writer = new StreamWriter(diagnostics.Open()))
+                await writer.WriteAsync(await WinPrinterHelper.GetDiagnosticsAsync());
 
             var healthResults = new List<PrinterHealthStatus>();
+
             foreach (var printer in _config.Printers.Where(x => x.Enabled))
             {
                 try
@@ -1015,9 +1064,11 @@ public sealed class MainForm : Form
                     var health = await WinPrinterHelper.ProbePrinterAsync(
                         printer.QueueName,
                         printer.Id);
+
                     health.PrinterName = string.IsNullOrWhiteSpace(printer.DisplayName)
                         ? printer.QueueName
                         : printer.DisplayName;
+
                     healthResults.Add(health);
                 }
                 catch (Exception ex)
@@ -1034,19 +1085,232 @@ public sealed class MainForm : Form
                 }
             }
 
-            var healthEntry = zip.CreateEntry("printer-health.json");
-            using (var hw = new StreamWriter(healthEntry.Open()))
-                await hw.WriteAsync(JsonSerializer.Serialize(
-                    healthResults,
-                    JsonStore.Options));
+            var healthEntry = zip.CreateEntry(
+                "printer-health.json",
+                CompressionLevel.Optimal);
 
-            SetStatus("✓ Diagnosepaket wurde erstellt.");
-            MessageBox.Show("Diagnosepaket wurde erstellt.");
+            await using (var writer = new StreamWriter(healthEntry.Open()))
+                await writer.WriteAsync(
+                    JsonSerializer.Serialize(
+                        healthResults,
+                        JsonStore.Options));
+
+            ClientDiagnosticsCollectionResult? clientResult = null;
+
+            if (includeClients)
+                clientResult = await AddClientDiagnosticsAsync(zip);
+
+            SetStatus(
+                includeClients
+                    ? $"✓ Gesamtdiagnose erstellt · {clientResult!.Included}/{clientResult.Online} Online-Clientpaket(e) enthalten."
+                    : "✓ Server-Diagnosepaket wurde erstellt.");
+
+            MessageBox.Show(
+                includeClients
+                    ? $"Vollständiges Diagnosepaket wurde erstellt.\r\n\r\n" +
+                      $"Online-Clients: {clientResult!.Online}\r\n" +
+                      $"Clientpakete enthalten: {clientResult.Included}\r\n" +
+                      $"Nicht abrufbar/älter: {clientResult.Failed}\r\n" +
+                      $"Offline: {clientResult.Offline}"
+                    : "Server-Diagnosepaket wurde erstellt.",
+                "SimplePrint Diagnose",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Diagnose", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            SetStatus("✗ Diagnosepaket konnte nicht erstellt werden.");
+            MessageBox.Show(
+                ex.Message,
+                "Diagnose",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
         }
+    }
+
+    private sealed record ClientDiagnosticsFetch(
+        ClientPresence Client,
+        byte[]? Archive,
+        string? Error);
+
+    private sealed record ClientDiagnosticsCollectionResult(
+        int Online,
+        int Included,
+        int Failed,
+        int Offline);
+
+    private async Task<ClientDiagnosticsCollectionResult> AddClientDiagnosticsAsync(
+        ZipArchive zip)
+    {
+        List<ClientPresence> savedClients;
+
+        try
+        {
+            savedClients = JsonStore.LoadOrCreate(
+                AppPaths.ServerClients,
+                () => new List<ClientPresence>());
+        }
+        catch
+        {
+            savedClients = [];
+        }
+
+        var clients = savedClients
+            .GroupBy(x => x.ClientId)
+            .Select(x => x.OrderByDescending(y => y.LastSeen).First())
+            .OrderBy(x => x.ClientName, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+        var now = DateTimeOffset.Now;
+        var online = clients
+            .Where(x => now - x.LastSeen <= TimeSpan.FromSeconds(35))
+            .ToList();
+
+        var offline = clients.Count - online.Count;
+
+        using var limiter = new SemaphoreSlim(4, 4);
+
+        var tasks = online.Select(async client =>
+        {
+            await limiter.WaitAsync();
+            try
+            {
+                return await FetchClientDiagnosticsAsync(client);
+            }
+            finally
+            {
+                limiter.Release();
+            }
+        });
+
+        var results = await Task.WhenAll(tasks);
+        var included = 0;
+        var manifest = new List<string>
+        {
+            $"SimplePrint vollständige Diagnose · {DateTimeOffset.Now:O}",
+            $"Server: {_config.ServerName} ({_config.ServerId})",
+            $"Bekannte Clients: {clients.Count}",
+            $"Online: {online.Count}",
+            $"Offline: {offline}",
+            ""
+        };
+
+        foreach (var client in clients.Where(x => now - x.LastSeen > TimeSpan.FromSeconds(35)))
+        {
+            manifest.Add(
+                $"OFFLINE | {client.ClientName} | {client.ClientId} | {client.Address} | " +
+                $"Version {client.AgentVersion} | letztes Lebenszeichen {client.LastSeen:O}");
+        }
+
+        foreach (var result in results)
+        {
+            var client = result.Client;
+
+            if (result.Archive is not null)
+            {
+                var safeName = MakeSafeEntryName(client.ClientName);
+                var entryName =
+                    $"clients/{safeName}-{client.ClientId.ToString("N")[..8]}.zip";
+
+                var entry = zip.CreateEntry(
+                    entryName,
+                    CompressionLevel.NoCompression);
+
+                await using var stream = entry.Open();
+                await stream.WriteAsync(result.Archive);
+
+                included++;
+                manifest.Add(
+                    $"OK | {client.ClientName} | {client.ClientId} | {client.Address}:{client.DiagnosticsPort} | " +
+                    $"Version {client.AgentVersion} | {entryName}");
+            }
+            else
+            {
+                manifest.Add(
+                    $"FEHLER | {client.ClientName} | {client.ClientId} | {client.Address}:{client.DiagnosticsPort} | " +
+                    $"Version {client.AgentVersion} | {result.Error}");
+            }
+        }
+
+        var manifestEntry = zip.CreateEntry(
+            "clients/collection.txt",
+            CompressionLevel.Optimal);
+
+        await using (var writer = new StreamWriter(manifestEntry.Open()))
+            await writer.WriteAsync(string.Join(Environment.NewLine, manifest));
+
+        return new ClientDiagnosticsCollectionResult(
+            online.Count,
+            included,
+            online.Count - included,
+            offline);
+    }
+
+    private async Task<ClientDiagnosticsFetch> FetchClientDiagnosticsAsync(
+        ClientPresence client)
+    {
+        if (client.DiagnosticsPort <= 0)
+        {
+            return new ClientDiagnosticsFetch(
+                client,
+                null,
+                "Client unterstützt den Remote-Diagnoseabruf noch nicht; 0.2.6 oder neuer erforderlich.");
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(70));
+            using var tcp = new TcpClient { NoDelay = true };
+
+            await tcp.ConnectAsync(
+                client.Address,
+                client.DiagnosticsPort,
+                timeout.Token);
+
+            using var stream = tcp.GetStream();
+
+            await stream.WriteAsync(
+                Protocol.CreateDiagnosticsRequest(_config.ServerId),
+                timeout.Token);
+
+            await stream.FlushAsync(timeout.Token);
+
+            var response = await Protocol.ReadDiagnosticsResponseAsync(
+                stream,
+                timeout.Token);
+
+            if (response.Archive is null)
+            {
+                return new ClientDiagnosticsFetch(
+                    client,
+                    null,
+                    response.Error ?? "Client hat kein Diagnosepaket geliefert.");
+            }
+
+            return new ClientDiagnosticsFetch(
+                client,
+                response.Archive,
+                null);
+        }
+        catch (Exception ex)
+        {
+            return new ClientDiagnosticsFetch(
+                client,
+                null,
+                ex.Message);
+        }
+    }
+
+    private static string MakeSafeEntryName(string value)
+    {
+        var safe = string.IsNullOrWhiteSpace(value)
+            ? "Client"
+            : value.Trim();
+
+        foreach (var c in Path.GetInvalidFileNameChars())
+            safe = safe.Replace(c, '_');
+
+        return safe.Replace('/', '_').Replace('\\', '_');
     }
 
     private void ShowAbout()
