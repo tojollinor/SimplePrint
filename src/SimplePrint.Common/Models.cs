@@ -48,6 +48,7 @@ public sealed class ClientPrinterMapping
     public string TransportMode { get; set; } = PrinterTransport.Tunnel;
     public string DirectAddress { get; set; } = "";
     public string DeviceUuid { get; set; } = "";
+    public bool UseExistingQueue { get; set; }
     public bool Enabled { get; set; } = true;
 }
 
