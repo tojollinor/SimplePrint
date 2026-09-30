@@ -1753,6 +1753,161 @@ public sealed class MainForm : Form
         }
     }
 
+    private void OpenSelectedOwnPrinterQueue()
+    {
+        if (_ownPrinters.SelectedRows.Count == 0 ||
+            _ownPrinters.SelectedRows[0].Tag is not LocalPrinterInfo printer)
+        {
+            MessageBox.Show(
+                "Bitte zuerst einen eigenen Drucker markieren.",
+                "SimplePrint",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            UnifiedPrinterHelper.OpenQueue(printer.Name);
+            SetStatus($"✓ Warteschlange '{printer.Name}' geöffnet");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Warteschlange",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    }
+
+    private void PrintSelectedOwnPrinterTestPage()
+    {
+        if (_ownPrinters.SelectedRows.Count == 0 ||
+            _ownPrinters.SelectedRows[0].Tag is not LocalPrinterInfo printer)
+        {
+            MessageBox.Show(
+                "Bitte zuerst einen eigenen Drucker markieren.",
+                "SimplePrint",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            UnifiedPrinterHelper.PrintTestPage(printer.Name);
+            SetStatus($"✓ Testseite für '{printer.Name}' gestartet");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Testseite",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    }
+
+    private NetworkPrinterMapping? GetSelectedNetworkMapping()
+    {
+        if (_networkPrinters.SelectedNode?.Tag is not NetworkPrinterTag tag)
+            return null;
+
+        return _config.NetworkPrinters.FirstOrDefault(x =>
+            x.Enabled &&
+            x.SourceDeviceId == tag.Device.DeviceId &&
+            x.PrinterId == tag.Printer.Id);
+    }
+
+    private void OpenSelectedNetworkPrinterQueue()
+    {
+        var mapping = GetSelectedNetworkMapping();
+        if (mapping is null)
+        {
+            MessageBox.Show(
+                "Bitte zuerst einen auf diesem Gerät installierten Netzwerkdrucker markieren.",
+                "SimplePrint",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            UnifiedPrinterHelper.OpenQueue(mapping.LocalPrinterName);
+            SetStatus($"✓ Warteschlange '{mapping.PrinterDisplayName}' geöffnet");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Warteschlange",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    }
+
+    private void PrintSelectedNetworkPrinterTestPage()
+    {
+        var mapping = GetSelectedNetworkMapping();
+        if (mapping is null)
+        {
+            MessageBox.Show(
+                "Bitte zuerst einen auf diesem Gerät installierten Netzwerkdrucker markieren.",
+                "SimplePrint",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            UnifiedPrinterHelper.PrintTestPage(mapping.LocalPrinterName);
+            SetStatus($"✓ Testseite für '{mapping.PrinterDisplayName}' gestartet");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Testseite",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    }
+
+    private void ClearCompletedJobs()
+    {
+        var jobs = JsonStore.LoadOrCreate(
+            AppPaths.DeviceJobs,
+            () => new List<PrintJobRecord>());
+
+        var completed = new HashSet<string>(
+            ["Gedruckt", "Abgeschlossen", "Ignoriert", "Fehler"],
+            StringComparer.OrdinalIgnoreCase);
+
+        var count = jobs.RemoveAll(x => completed.Contains(x.Status));
+        JsonStore.Save(AppPaths.DeviceJobs, jobs);
+        RefreshJobsGrid();
+        SetStatus($"✓ {count} abgeschlossene Druckaufträge gelöscht");
+    }
+
+    private void ClearAllJobs()
+    {
+        if (MessageBox.Show(
+                "Die gesamte gespeicherte Druckauftragshistorie dieses Geräts löschen?",
+                "Druckaufträge löschen",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        JsonStore.Save(AppPaths.DeviceJobs, new List<PrintJobRecord>());
+        RefreshJobsGrid();
+        SetStatus("✓ Druckauftragshistorie gelöscht");
+    }
+
     private void RefreshJobsGrid()
     {
         List<PrintJobRecord> jobs;
