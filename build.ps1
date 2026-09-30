@@ -8,6 +8,12 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Dist = Join-Path $Root "dist"
 
+[xml]$props = Get-Content (Join-Path $Root "Directory.Build.props")
+$version = [string]$props.Project.PropertyGroup.Version
+if ([string]::IsNullOrWhiteSpace($version)) {
+  throw "SimplePrint-Version konnte nicht ermittelt werden."
+}
+
 Write-Host "== SimplePrint Build ==" -ForegroundColor Cyan
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
   throw ".NET 8 SDK wurde nicht gefunden. Installiere das .NET 8 SDK und starte das Skript erneut."
@@ -21,11 +27,7 @@ New-Item $Dist -ItemType Directory | Out-Null
 
 $projects = @(
   @{ Name="UnifiedService"; Project="src\SimplePrint.Service\SimplePrint.Service.csproj"; Out="Unified\Service" },
-  @{ Name="UnifiedGui";     Project="src\SimplePrint.Gui\SimplePrint.Gui.csproj";             Out="Unified\Gui" },
-  @{ Name="ServerService";  Project="src\SimplePrint.Server.Service\SimplePrint.Server.Service.csproj"; Out="Server\Service" },
-  @{ Name="ServerGui";     Project="src\SimplePrint.Server.Gui\SimplePrint.Server.Gui.csproj";         Out="Server\Gui" },
-  @{ Name="ClientService"; Project="src\SimplePrint.Client.Service\SimplePrint.Client.Service.csproj"; Out="Client\Service" },
-  @{ Name="ClientGui";     Project="src\SimplePrint.Client.Gui\SimplePrint.Client.Gui.csproj";         Out="Client\Gui" }
+  @{ Name="UnifiedGui"; Project="src\SimplePrint.Gui\SimplePrint.Gui.csproj"; Out="Unified\Gui" }
 )
 
 foreach ($p in $projects) {
@@ -57,22 +59,27 @@ if (-not $compiler) {
 
 New-Item (Join-Path $Dist "Installer") -ItemType Directory -Force | Out-Null
 
-$installerScripts = @(
-  @{ Name="Server"; Script="installer\SimplePrint.Server.iss" },
-  @{ Name="Client"; Script="installer\SimplePrint.Client.iss" }
-)
-
-foreach ($installer in $installerScripts) {
-  Write-Host "Building $($installer.Name) installer..." -ForegroundColor Yellow
-  & $compiler (Join-Path $Root $installer.Script)
-  if ($LASTEXITCODE -ne 0) {
-    throw "Inno Setup Build für $($installer.Name) ist fehlgeschlagen."
-  }
+Write-Host "Building offline installer..." -ForegroundColor Yellow
+& $compiler "/DMyAppVersion=$version" (Join-Path $Root "installer\SimplePrint.iss")
+if ($LASTEXITCODE -ne 0) {
+  throw "Inno Setup Build für den Offline-Installer ist fehlgeschlagen."
 }
 
-$builtInstallers = @(Get-ChildItem (Join-Path $Dist "Installer") -Filter "SimplePrint-*-Setup-*.exe")
-if ($builtInstallers.Count -ne 2) {
-  throw "Es wurden nicht genau zwei SimplePrint-Installer erzeugt."
+Write-Host "Building online installer..." -ForegroundColor Yellow
+& $compiler (Join-Path $Root "installer\SimplePrint.Online.iss")
+if ($LASTEXITCODE -ne 0) {
+  throw "Inno Setup Build für den Online-Installer ist fehlgeschlagen."
 }
 
-Write-Host "Fertig. Server- und Client-Installer liegen getrennt unter dist\Installer." -ForegroundColor Green
+$offline = Join-Path $Dist ("Installer\SimplePrint-Setup-" + $version + ".exe")
+$online = Join-Path $Dist "Installer\SimplePrint-Setup.exe"
+
+if (-not (Test-Path $offline)) {
+  throw "Offline-Installer wurde nicht erzeugt: $offline"
+}
+
+if (-not (Test-Path $online)) {
+  throw "Online-Installer wurde nicht erzeugt: $online"
+}
+
+Write-Host "Fertig. Online- und Offline-Installer liegen unter dist\Installer." -ForegroundColor Green
