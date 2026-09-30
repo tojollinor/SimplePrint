@@ -3,7 +3,7 @@ name: Build SimplePrint
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, feature/0.3.0-unified-simpleprint ]
 
 permissions:
   contents: write
@@ -16,23 +16,28 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
+
       - name: Build
         shell: powershell
         run: .\build.ps1
-      - name: Upload installer
+
+      - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: SimplePrint-Installer
-          path: dist/Installer/*.exe
+          path: |
+            dist/Installer/SimplePrint-Setup.exe
+            dist/Installer/SimplePrint-Setup-*.exe
+
       - name: Upload published binaries
         uses: actions/upload-artifact@v4
         with:
           name: SimplePrint-Published
-          path: |
-            dist/Server/**
-            dist/Client/**\n            dist/Unified/**
+          path: dist/Unified/**
+
       - name: Publish GitHub Release
         if: contains(github.event.head_commit.message, '[release]')
         shell: powershell
@@ -41,24 +46,39 @@ jobs:
         run: |
           [xml]$props = Get-Content "Directory.Build.props"
           $version = [string]$props.Project.PropertyGroup.Version
-          if ([string]::IsNullOrWhiteSpace($version)) { throw "Version konnte nicht ermittelt werden." }
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Version konnte nicht ermittelt werden."
+          }
+
           $tag = "v$version"
-          $installers = @(Get-ChildItem "dist\Installer\SimplePrint-*-Setup-$version.exe" | Sort-Object Name)
-          if ($installers.Count -ne 2) { throw "Server- und Client-Installer wurden nicht vollständig gefunden." }
+          $offline = "dist\Installer\SimplePrint-Setup-$version.exe"
+          $online = "dist\Installer\SimplePrint-Setup.exe"
+
+          if (-not (Test-Path $offline)) {
+            throw "Offline-Installer fehlt: $offline"
+          }
+          if (-not (Test-Path $online)) {
+            throw "Online-Installer fehlt: $online"
+          }
 
           $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
-          $exists = $null -ne ($releases | Where-Object { $_.tagName -eq $tag } | Select-Object -First 1)
+          $exists = $null -ne (
+            $releases |
+              Where-Object { $_.tagName -eq $tag } |
+              Select-Object -First 1
+          )
 
           if (-not $exists) {
             gh release create $tag `
               --title "SimplePrint $version" `
               --target "$env:GITHUB_SHA" `
-              --notes "SimplePrint ${version}: resolves WSD printers through Windows DAFWSDProvider LocationInformation, enriches server routes automatically at service startup, improves printer-route diagnostics, and suppresses PowerShell CLIXML progress noise."
+              --notes "SimplePrint $version vereinigt Server und Client in einer Anwendung und einem Dienst. Enthalten sind Multi-Geräte-Druckerverbindungen, gemeinsame Diagnosepakete sowie Online- und Offline-Installer."
           }
 
-          foreach ($installer in $installers) {
+          foreach ($installer in @($offline, $online)) {
+            $name = Split-Path $installer -Leaf
             if ($exists) {
-              gh release delete-asset $tag $installer.Name -y 2>$null
+              gh release delete-asset $tag $name -y 2>$null
             }
-            gh release upload $tag "$($installer.FullName)"
+            gh release upload $tag $installer
           }
