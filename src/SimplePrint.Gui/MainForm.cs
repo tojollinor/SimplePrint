@@ -1,3 +1,6 @@
+using System.IO.Compression;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using SimplePrint.Common;
 
@@ -52,6 +55,7 @@ public sealed class MainForm : Form
     private List<DevicePresence> _peers = [];
     private bool _allowExit;
     private bool _suppressNetworkTreeCheck;
+    private bool _suppressDiagnosticsTreeCheck;
 
     public MainForm()
     {
@@ -105,6 +109,26 @@ public sealed class MainForm : Form
             finally
             {
                 _suppressNetworkTreeCheck = false;
+            }
+        };
+
+        _diagnostics.AfterCheck += (_, e) =>
+        {
+            if (_suppressDiagnosticsTreeCheck ||
+                e.Node.Tag is not string tag ||
+                !tag.StartsWith("group:", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _suppressDiagnosticsTreeCheck = true;
+            try
+            {
+                e.Node.Checked = false;
+            }
+            finally
+            {
+                _suppressDiagnosticsTreeCheck = false;
             }
         };
 
@@ -420,8 +444,14 @@ public sealed class MainForm : Form
                 "für ein Diagnosepaket ausgewählt werden. Dieses Gerät ist standardmäßig aktiviert, aber abwählbar."
         };
 
+        var buttons = BottomButtons();
+        buttons.Controls.Add(MakeButton(
+            "Diagnosepaket erstellen",
+            async (_, _) => await CreateDiagnosticsAsync()));
+
         tab.Controls.Add(_diagnostics);
         tab.Controls.Add(info);
+        tab.Controls.Add(buttons);
         return tab;
     }
 
@@ -1603,7 +1633,10 @@ public sealed class MainForm : Form
             };
             _diagnostics.Nodes.Add(local);
 
-            var serverRoot = new TreeNode("Server");
+            var serverRoot = new TreeNode("Server")
+            {
+                Tag = "group:servers"
+            };
             var serverIds = _config.NetworkPrinters
                 .Where(x => x.Enabled)
                 .Select(x => x.SourceDeviceId)
@@ -1621,7 +1654,10 @@ public sealed class MainForm : Form
                 });
             }
 
-            var clientRoot = new TreeNode("Clients");
+            var clientRoot = new TreeNode("Clients")
+            {
+                Tag = "group:clients"
+            };
             foreach (var peer in _peers.Where(x =>
                          x.Subscriptions.Any(s => s.SourceDeviceId == _config.DeviceId)))
             {
