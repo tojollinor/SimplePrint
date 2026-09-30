@@ -1358,7 +1358,11 @@ public sealed class MainForm : Form
                 .Select(x => x.DeviceId)
                 .ToHashSet();
 
-            foreach (var peer in _peers.Where(x => x.Printers.Count > 0))
+            foreach (var peer in _peers.Where(x =>
+                         x.Printers.Count > 0 ||
+                         _config.NetworkPrinters.Any(m =>
+                             m.Enabled &&
+                             m.SourceDeviceId == x.DeviceId)))
             {
                 var device = new TreeNode(
                     $"{peer.DeviceName}  ·  {peer.Address}")
@@ -1367,9 +1371,13 @@ public sealed class MainForm : Form
                     NodeFont = new Font(_networkPrinters.Font, FontStyle.Bold)
                 };
 
+                var advertisedIds = new HashSet<Guid>();
+
                 foreach (var printer in peer.Printers
                              .OrderBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase))
                 {
+                    advertisedIds.Add(printer.Id);
+
                     var selected = _config.NetworkPrinters.Any(x =>
                         x.Enabled &&
                         x.SourceDeviceId == peer.DeviceId &&
@@ -1380,6 +1388,36 @@ public sealed class MainForm : Form
                     {
                         Tag = new NetworkPrinterTag(peer, printer),
                         Checked = selected
+                    });
+                }
+
+                foreach (var mapping in _config.NetworkPrinters
+                             .Where(x =>
+                                 x.Enabled &&
+                                 x.SourceDeviceId == peer.DeviceId &&
+                                 !advertisedIds.Contains(x.PrinterId))
+                             .OrderBy(
+                                 x => x.PrinterDisplayName,
+                                 StringComparer.CurrentCultureIgnoreCase))
+                {
+                    var noLongerShared = new DiscoveredPrinter
+                    {
+                        Id = mapping.PrinterId,
+                        DisplayName = mapping.PrinterDisplayName,
+                        DriverName = mapping.DriverName,
+                        PortName = mapping.PortName,
+                        TransportMode = mapping.TransportMode,
+                        DirectAddress = mapping.DirectAddress,
+                        DeviceUuid = mapping.DeviceUuid,
+                        Status = "nicht mehr freigegeben"
+                    };
+
+                    device.Nodes.Add(new TreeNode(
+                        $"{noLongerShared.DisplayName}   [nicht mehr freigegeben]")
+                    {
+                        Tag = new NetworkPrinterTag(peer, noLongerShared),
+                        Checked = true,
+                        ForeColor = SystemColors.GrayText
                     });
                 }
 
