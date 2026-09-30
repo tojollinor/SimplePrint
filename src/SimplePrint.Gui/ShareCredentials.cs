@@ -73,11 +73,16 @@ internal static class ShareCredentialPrompt
         });
     }
 
+    /// <summary>
+    /// Fragt Zugangsdaten für die Windows-Druckerfreigabe ab. previousError ist null beim
+    /// ersten Versuch; bei einer Wiederholung enthält er die Windows-Meldung des
+    /// abgelehnten Versuchs (leer, wenn keine vorhanden ist).
+    /// </summary>
     public static ShareCredentials? Ask(
         string server,
         string printer,
         string serverDeviceName,
-        bool previousFailed)
+        string? previousError)
     {
         return RunOnUi(() =>
         {
@@ -89,7 +94,7 @@ internal static class ShareCredentialPrompt
             {
                 Text = "Windows-Anmeldung für die Druckerfreigabe",
                 Width = 660,
-                Height = 560,
+                Height = 600,
                 StartPosition = FormStartPosition.CenterScreen,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
@@ -116,10 +121,13 @@ internal static class ShareCredentialPrompt
                 ForeColor = color ?? SystemColors.ControlText
             };
 
-            if (previousFailed)
+            if (previousError is not null)
             {
                 panel.Controls.Add(MakeLabel(
-                    "Die Anmeldung wurde vom Server abgelehnt. Bitte Benutzername und Passwort prüfen.",
+                    "Die Anmeldung wurde abgelehnt. Bitte Benutzername und Passwort prüfen." +
+                    (string.IsNullOrWhiteSpace(previousError)
+                        ? ""
+                        : "\r\n\r\nWindows meldet: " + previousError),
                     true,
                     Color.Firebrick));
             }
