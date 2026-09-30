@@ -20,7 +20,8 @@ if (Test-Path $Dist) { Remove-Item $Dist -Recurse -Force }
 New-Item $Dist -ItemType Directory | Out-Null
 
 $projects = @(
-  @{ Name="ServerService"; Project="src\SimplePrint.Server.Service\SimplePrint.Server.Service.csproj"; Out="Server\Service" },
+  @{ Name="UnifiedService"; Project="src\SimplePrint.Service\SimplePrint.Service.csproj"; Out="Unified\Service" },
+  @{ Name="ServerService";  Project="src\SimplePrint.Server.Service\SimplePrint.Server.Service.csproj"; Out="Server\Service" },
   @{ Name="ServerGui";     Project="src\SimplePrint.Server.Gui\SimplePrint.Server.Gui.csproj";         Out="Server\Gui" },
   @{ Name="ClientService"; Project="src\SimplePrint.Client.Service\SimplePrint.Client.Service.csproj"; Out="Client\Service" },
   @{ Name="ClientGui";     Project="src\SimplePrint.Client.Gui\SimplePrint.Client.Gui.csproj";         Out="Client\Gui" }
