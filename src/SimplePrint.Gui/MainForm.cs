@@ -73,6 +73,7 @@ public sealed class MainForm : Form
     private bool _suppressDiagnosticsTreeCheck;
     private bool _updateCheckRunning;
     private string? _lastOfferedUpdate;
+    private string _networkCatalogFingerprint = "";
 
     public MainForm()
     {
@@ -770,10 +771,21 @@ public sealed class MainForm : Form
         {
             _config = UnifiedConfigStore.LoadOrMigrate();
             LoadActivePeers();
+
+            var networkFingerprint = BuildNetworkCatalogFingerprint();
+            var networkChanged =
+                !string.Equals(
+                    networkFingerprint,
+                    _networkCatalogFingerprint,
+                    StringComparison.Ordinal);
+
             RefreshHeader();
             RefreshOverview();
             RefreshRelationshipGrids();
             RefreshDiagnosticsTree();
+
+            if (networkChanged)
+                RefreshNetworkPrinterTree();
 
             if (Visible)
                 RefreshJobsGrid();
@@ -1555,6 +1567,8 @@ public sealed class MainForm : Form
 
     private void RefreshNetworkPrinterTree()
     {
+        var pendingSelections = CollectNetworkPrinterSelections();
+
         _networkPrinters.BeginUpdate();
         try
         {
@@ -1584,10 +1598,14 @@ public sealed class MainForm : Form
                 {
                     advertisedIds.Add(printer.Id);
 
-                    var selected = _config.NetworkPrinters.Any(x =>
-                        x.Enabled &&
-                        x.SourceDeviceId == peer.DeviceId &&
-                        x.PrinterId == printer.Id);
+                    var key = (peer.DeviceId, printer.Id);
+                    var selected =
+                        pendingSelections.TryGetValue(key, out var pending)
+                            ? pending
+                            : _config.NetworkPrinters.Any(x =>
+                                x.Enabled &&
+                                x.SourceDeviceId == peer.DeviceId &&
+                                x.PrinterId == printer.Id);
 
                     device.Nodes.Add(new TreeNode(
                         $"{printer.DisplayName}   [{printer.Status}]")
@@ -1622,7 +1640,12 @@ public sealed class MainForm : Form
                         $"{noLongerShared.DisplayName}   [nicht mehr freigegeben]")
                     {
                         Tag = new NetworkPrinterTag(peer, noLongerShared),
-                        Checked = true,
+                        Checked =
+                            pendingSelections.TryGetValue(
+                                (peer.DeviceId, noLongerShared.Id),
+                                out var pending)
+                                ? pending
+                                : true,
                         ForeColor = SystemColors.GrayText
                     });
                 }
@@ -1684,7 +1707,12 @@ public sealed class MainForm : Form
                         $"{printer.DisplayName}   [nicht erreichbar]")
                     {
                         Tag = new NetworkPrinterTag(offlinePeer, printer),
-                        Checked = true,
+                        Checked =
+                            pendingSelections.TryGetValue(
+                                (offlinePeer.DeviceId, printer.Id),
+                                out var pending)
+                                ? pending
+                                : true,
                         ForeColor = SystemColors.GrayText
                     });
                 }
@@ -1702,7 +1730,61 @@ public sealed class MainForm : Form
         finally
         {
             _networkPrinters.EndUpdate();
+            _networkCatalogFingerprint = BuildNetworkCatalogFingerprint();
         }
+    }
+
+    private Dictionary<(Guid DeviceId, Guid PrinterId), bool>
+        CollectNetworkPrinterSelections()
+    {
+        var result =
+            new Dictionary<(Guid DeviceId, Guid PrinterId), bool>();
+
+        foreach (TreeNode root in _networkPrinters.Nodes)
+        {
+            foreach (TreeNode child in root.Nodes)
+            {
+                if (child.Tag is NetworkPrinterTag tag)
+                {
+                    result[(tag.Device.DeviceId, tag.Printer.Id)] =
+                        child.Checked;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private string BuildNetworkCatalogFingerprint()
+    {
+        var lines = new List<string>();
+
+        foreach (var peer in _peers
+                     .OrderBy(x => x.DeviceId))
+        {
+            lines.Add(
+                $"P|{peer.DeviceId:N}|{peer.Address}|{peer.ProtocolVersion}|{peer.AppVersion}");
+
+            foreach (var printer in peer.Printers
+                         .OrderBy(x => x.Id))
+            {
+                lines.Add(
+                    $"D|{peer.DeviceId:N}|{printer.Id:N}|{printer.DisplayName}|{printer.Status}|" +
+                    $"{printer.TransportMode}|{printer.DirectAddress}|{printer.DeviceUuid}");
+            }
+        }
+
+        foreach (var mapping in _config.NetworkPrinters
+                     .Where(x => x.Enabled)
+                     .OrderBy(x => x.SourceDeviceId)
+                     .ThenBy(x => x.PrinterId))
+        {
+            lines.Add(
+                $"M|{mapping.SourceDeviceId:N}|{mapping.PrinterId:N}|{mapping.PrinterDisplayName}|" +
+                $"{mapping.TransportMode}|{mapping.DirectAddress}|{mapping.DeviceUuid}");
+        }
+
+        return string.Join("\n", lines);
     }
 
     private void RefreshRelationshipGrids()
