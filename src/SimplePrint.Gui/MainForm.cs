@@ -838,8 +838,11 @@ public sealed class MainForm : Form
         {
             SetBusy("Netzwerkdruckerauswahl wird übernommen …");
 
-            var activePeerIds = _peers
-                .Select(x => x.DeviceId)
+            var visibleSourceIds = _networkPrinters.Nodes
+                .Cast<TreeNode>()
+                .Where(x => x.Tag is DevicePresence)
+                .Select(x => ((DevicePresence)x.Tag!).DeviceId)
+                .Where(x => x != Guid.Empty)
                 .ToHashSet();
 
             var desired = new Dictionary<(Guid DeviceId, Guid PrinterId), NetworkPrinterTag>();
@@ -862,11 +865,11 @@ public sealed class MainForm : Form
                 }
             }
 
-            var existingFromActivePeers = _config.NetworkPrinters
-                .Where(x => activePeerIds.Contains(x.SourceDeviceId))
+            var existingFromVisiblePeers = _config.NetworkPrinters
+                .Where(x => visibleSourceIds.Contains(x.SourceDeviceId))
                 .ToList();
 
-            foreach (var mapping in existingFromActivePeers)
+            foreach (var mapping in existingFromVisiblePeers)
             {
                 if (desired.ContainsKey((mapping.SourceDeviceId, mapping.PrinterId)))
                     continue;
@@ -1351,6 +1354,10 @@ public sealed class MainForm : Form
         {
             _networkPrinters.Nodes.Clear();
 
+            var activeIds = _peers
+                .Select(x => x.DeviceId)
+                .ToHashSet();
+
             foreach (var peer in _peers.Where(x => x.Printers.Count > 0))
             {
                 var device = new TreeNode(
@@ -1373,6 +1380,68 @@ public sealed class MainForm : Form
                     {
                         Tag = new NetworkPrinterTag(peer, printer),
                         Checked = selected
+                    });
+                }
+
+                device.Expand();
+                _networkPrinters.Nodes.Add(device);
+            }
+
+            foreach (var group in _config.NetworkPrinters
+                         .Where(x =>
+                             x.Enabled &&
+                             x.SourceDeviceId != Guid.Empty &&
+                             !activeIds.Contains(x.SourceDeviceId))
+                         .GroupBy(x => x.SourceDeviceId)
+                         .OrderBy(x =>
+                             x.First().SourceDeviceName,
+                             StringComparer.CurrentCultureIgnoreCase))
+            {
+                var first = group.First();
+                var offlinePeer = new DevicePresence
+                {
+                    DeviceId = group.Key,
+                    DeviceName = string.IsNullOrWhiteSpace(first.SourceDeviceName)
+                        ? group.Key.ToString()
+                        : first.SourceDeviceName,
+                    Address = "",
+                    AppVersion = "nicht erreichbar",
+                    ProtocolVersion = Protocol.Version,
+                    GatewayPort = Protocol.DefaultGatewayPort,
+                    DiagnosticsPort = Protocol.DefaultDiagnosticsPort,
+                    LastSeen = DateTimeOffset.MinValue
+                };
+
+                var device = new TreeNode(
+                    $"{offlinePeer.DeviceName}  ·  nicht erreichbar")
+                {
+                    Tag = offlinePeer,
+                    NodeFont = new Font(_networkPrinters.Font, FontStyle.Bold),
+                    ForeColor = SystemColors.GrayText
+                };
+
+                foreach (var mapping in group.OrderBy(
+                             x => x.PrinterDisplayName,
+                             StringComparer.CurrentCultureIgnoreCase))
+                {
+                    var printer = new DiscoveredPrinter
+                    {
+                        Id = mapping.PrinterId,
+                        DisplayName = mapping.PrinterDisplayName,
+                        DriverName = mapping.DriverName,
+                        PortName = mapping.PortName,
+                        TransportMode = mapping.TransportMode,
+                        DirectAddress = mapping.DirectAddress,
+                        DeviceUuid = mapping.DeviceUuid,
+                        Status = "Quellgerät nicht erreichbar"
+                    };
+
+                    device.Nodes.Add(new TreeNode(
+                        $"{printer.DisplayName}   [nicht erreichbar]")
+                    {
+                        Tag = new NetworkPrinterTag(offlinePeer, printer),
+                        Checked = true,
+                        ForeColor = SystemColors.GrayText
                     });
                 }
 
