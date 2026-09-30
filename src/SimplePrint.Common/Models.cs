@@ -57,6 +57,20 @@ public sealed record DiscoveredDevice(
     IPAddress Address,
     DateTimeOffset SeenAt);
 
+public sealed class DevicePresence
+{
+    public Guid DeviceId { get; set; }
+    public string DeviceName { get; set; } = "";
+    public string Address { get; set; } = "";
+    public string AppVersion { get; set; } = "";
+    public int ProtocolVersion { get; set; }
+    public int GatewayPort { get; set; }
+    public int DiagnosticsPort { get; set; }
+    public List<DiscoveredPrinter> Printers { get; set; } = [];
+    public List<PrinterSubscriptionAnnouncement> Subscriptions { get; set; } = [];
+    public DateTimeOffset LastSeen { get; set; }
+}
+
 
 public sealed class ServerConfig
 {
