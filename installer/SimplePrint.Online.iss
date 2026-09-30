@@ -38,22 +38,27 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResolverPath: String;
   UrlPath: String;
+  HashPath: String;
   DownloadUrl: AnsiString;
+  DownloadHash: AnsiString;
   ResultCode: Integer;
 begin
   Result := '';
   ResolverPath := ExpandConstant('{tmp}\Get-Latest-Installer.ps1');
   UrlPath := ExpandConstant('{tmp}\SimplePrint-latest-url.txt');
+  HashPath := ExpandConstant('{tmp}\SimplePrint-latest-sha256.txt');
 
   ExtractTemporaryFile('Get-Latest-Installer.ps1');
   DeleteFile(UrlPath);
+  DeleteFile(HashPath);
 
   WizardForm.StatusLabel.Caption := 'Aktuelles SimplePrint-Release wird ermittelt ...';
 
   if not Exec(
       ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
       '-NoProfile -ExecutionPolicy Bypass -File "' + ResolverPath +
-      '" -OutputPath "' + UrlPath + '"',
+      '" -UrlOutputPath "' + UrlPath +
+      '" -HashOutputPath "' + HashPath + '"',
       '',
       SW_HIDE,
       ewWaitUntilTerminated,
@@ -76,6 +81,10 @@ begin
   end;
 
   DownloadUrl := Trim(DownloadUrl);
+  DownloadHash := '';
+  LoadStringFromFile(HashPath, DownloadHash);
+  DownloadHash := Trim(DownloadHash);
+
   if DownloadUrl = '' then
   begin
     Result := 'GitHub hat keine Downloadadresse für den aktuellen SimplePrint-Installer geliefert.';
@@ -91,7 +100,7 @@ begin
   DownloadPage.Add(
     String(DownloadUrl),
     'SimplePrint-Latest-Offline.exe',
-    '');
+    String(DownloadHash));
 
   DownloadPage.Show;
   try
