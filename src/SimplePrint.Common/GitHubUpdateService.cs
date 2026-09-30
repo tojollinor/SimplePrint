@@ -10,7 +10,8 @@ namespace SimplePrint.Common;
 public enum SimplePrintComponent
 {
     Server,
-    Client
+    Client,
+    Unified
 }
 
 public sealed record ReleaseUpdateInfo(
@@ -94,9 +95,12 @@ public static class GitHubUpdateService
             assets.ValueKind != JsonValueKind.Array)
             return null;
 
-        var expectedPrefix = component == SimplePrintComponent.Server
-            ? "SimplePrint-Server-Setup-"
-            : "SimplePrint-Client-Setup-";
+        var expectedPrefix = component switch
+        {
+            SimplePrintComponent.Server => "SimplePrint-Server-Setup-",
+            SimplePrintComponent.Client => "SimplePrint-Client-Setup-",
+            _ => "SimplePrint-Setup-"
+        };
 
         foreach (var asset in assets.EnumerateArray())
         {
@@ -152,9 +156,12 @@ public static class GitHubUpdateService
         CancellationToken cancellationToken = default)
     {
         var safeName = Path.GetFileName(release.InstallerName);
-        var expectedPrefix = release.Component == SimplePrintComponent.Server
-            ? "SimplePrint-Server-Setup-"
-            : "SimplePrint-Client-Setup-";
+        var expectedPrefix = release.Component switch
+        {
+            SimplePrintComponent.Server => "SimplePrint-Server-Setup-",
+            SimplePrintComponent.Client => "SimplePrint-Client-Setup-",
+            _ => "SimplePrint-Setup-"
+        };
 
         if (string.IsNullOrWhiteSpace(safeName) ||
             !safeName.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase) ||
