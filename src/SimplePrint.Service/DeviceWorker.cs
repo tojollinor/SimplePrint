@@ -22,6 +22,7 @@ public sealed class DeviceWorker : BackgroundService
     private readonly Dictionary<string, ListenerState> _listeners =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _jobSaveLock = new(1, 1);
+    private readonly SemaphoreSlim _diagnosticsLock = new(1, 1);
     private readonly object _configLock = new();
     private readonly object _listenerLock = new();
 
@@ -46,6 +47,7 @@ public sealed class DeviceWorker : BackgroundService
             RunDiscoveryResponderAsync(stoppingToken),
             RunPeerDiscoveryLoopAsync(stoppingToken),
             RunGatewayAsync(stoppingToken),
+            RunDiagnosticsAsync(stoppingToken),
             RunReloadLoopAsync(stoppingToken));
     }
 
@@ -462,6 +464,127 @@ if($wanted.Count -gt 0) {
                 .ToList(),
             LastSeen = device.SeenAt
         };
+
+    private async Task RunDiagnosticsAsync(CancellationToken ct)
+    {
+        var cfg = SnapshotConfig();
+        var listener = new TcpListener(IPAddress.Any, cfg.DiagnosticsPort);
+        listener.Start(8);
+
+        _log.Info($"Diagnose-Endpunkt lauscht auf TCP {cfg.DiagnosticsPort}.");
+
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var client = await listener.AcceptTcpClientAsync(ct);
+                _ = Task.Run(
+                    () => HandleDiagnosticsRequestAsync(client, ct),
+                    CancellationToken.None);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    private async Task HandleDiagnosticsRequestAsync(
+        TcpClient client,
+        CancellationToken serviceCt)
+    {
+        using (client)
+        {
+            await _diagnosticsLock.WaitAsync(serviceCt);
+            try
+            {
+                client.NoDelay = true;
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(serviceCt);
+                timeout.CancelAfter(TimeSpan.FromSeconds(75));
+                using var stream = client.GetStream();
+
+                var request = new byte[Protocol.DiagnosticsRequestLength];
+                if (!await Protocol.ReadExactAsync(stream, request, timeout.Token) ||
+                    !Protocol.TryParseDiagnosticsRequest(request, out var requesterId))
+                {
+                    return;
+                }
+
+                var remoteIp =
+                    (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString()
+                    ?? "";
+
+                var authorized =
+                    requesterId != Guid.Empty &&
+                    _peers.TryGetValue(requesterId, out var requester) &&
+                    DateTimeOffset.Now - requester.LastSeen <= TimeSpan.FromSeconds(35) &&
+                    string.Equals(
+                        requester.Address,
+                        remoteIp,
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!authorized)
+                {
+                    await Protocol.WriteDiagnosticsErrorAsync(
+                        stream,
+                        "Diagnoseabruf abgelehnt: Das anfragende SimplePrint-Gerät ist aktuell nicht als aktives Netzwerkgerät bekannt.",
+                        timeout.Token);
+                    return;
+                }
+
+                var config = SnapshotConfig();
+                var peers = _peers.Values
+                    .Where(x => DateTimeOffset.Now - x.LastSeen <= TimeSpan.FromSeconds(35))
+                    .OrderBy(x => x.DeviceName, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList();
+
+                _log.Info(
+                    $"Diagnosepaket für '{requester!.DeviceName}' ({requesterId}) wird erstellt.");
+
+                var archive = await UnifiedDiagnosticsBuilder.CreateArchiveAsync(
+                    config,
+                    peers,
+                    timeout.Token);
+
+                await Protocol.WriteDiagnosticsArchiveAsync(
+                    stream,
+                    archive,
+                    timeout.Token);
+
+                _log.Info(
+                    $"Diagnosepaket mit {archive.Length:N0} Byte an '{requester.DeviceName}' übertragen.");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Remote-Diagnose fehlgeschlagen", ex);
+
+                try
+                {
+                    if (client.Connected)
+                    {
+                        using var stream = client.GetStream();
+                        await Protocol.WriteDiagnosticsErrorAsync(
+                            stream,
+                            ex.Message,
+                            CancellationToken.None);
+                    }
+                }
+                catch
+                {
+                }
+            }
+            finally
+            {
+                _diagnosticsLock.Release();
+            }
+        }
+    }
 
     private async Task RunGatewayAsync(CancellationToken ct)
     {
