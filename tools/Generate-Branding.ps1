@@ -9,7 +9,13 @@ $assets = Join-Path $Root "assets"
 New-Item $assets -ItemType Directory -Force | Out-Null
 $pngPath = Join-Path $assets "logo.png"
 $icoPath = Join-Path $assets "app.ico"
-$versionedIcoPath = Join-Path $assets "app-0.2.13.ico"
+
+[xml]$props = Get-Content (Join-Path $Root "Directory.Build.props")
+$version = [string]$props.Project.PropertyGroup.Version
+if ([string]::IsNullOrWhiteSpace($version)) {
+  throw "SimplePrint-Version konnte für das Branding nicht ermittelt werden."
+}
+$versionedIcoPath = Join-Path $assets ("app-" + $version + ".ico")
 
 function New-RoundedPath {
   param(
