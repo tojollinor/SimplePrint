@@ -623,7 +623,7 @@ $printer={PowerShellRunner.Quote(mapping.LocalPrinterName)}
 $port={PowerShellRunner.Quote(mapping.PortName)}
 $proxyPort={mapping.LocalProxyPort}
 
-$svc = Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue
+$svc = Get-Service -Name SimplePrint -ErrorAction SilentlyContinue
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
 $pp = Get-PrinterPort -Name $port -ErrorAction SilentlyContinue
 $listen = Get-NetTCPConnection -State Listen -LocalPort $proxyPort -ErrorAction SilentlyContinue
@@ -632,7 +632,7 @@ $queuePortMatches = ($p -and $p.PortName -eq $port)
 $problems = @()
 $warnings = @()
 
-if(-not $svc -or [string]$svc.Status -ne 'Running') {{ $problems += 'SimplePrint Client-Agent läuft nicht.' }}
+if(-not $svc -or [string]$svc.Status -ne 'Running') {{ $problems += 'SimplePrint-Dienst läuft nicht.' }}
 if(-not $p) {{ $problems += 'Windows-Druckerqueue fehlt.' }}
 elseif($p.PortName -ne $port) {{ $problems += 'Windows-Drucker verwendet nicht den erwarteten SimplePrint-Port.' }}
 
@@ -705,8 +705,8 @@ $port={PowerShellRunner.Quote(mapping.PortName)}
 $proxyPort={mapping.LocalProxyPort}
 
 '=== DIENST ==='
-$svc = Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue
-if($svc) {{ 'SimplePrintClient: ' + $svc.Status }} else {{ 'SimplePrintClient: NICHT INSTALLIERT' }}
+$svc = Get-Service -Name SimplePrint -ErrorAction SilentlyContinue
+if($svc) {{ 'SimplePrint: ' + $svc.Status }} else {{ 'SimplePrint: NICHT INSTALLIERT' }}
 
 '=== WINDOWS-DRUCKER ==='
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
@@ -750,7 +750,7 @@ Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber
 '=== NETWORK PROFILE ==='
 Get-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory,IPv4Connectivity,IPv6Connectivity -AutoSize | Out-String
 '=== CLIENT AGENT ==='
-Get-Service -Name SimplePrintClient -ErrorAction SilentlyContinue | Format-List * | Out-String
+Get-Service -Name SimplePrint -ErrorAction SilentlyContinue | Format-List * | Out-String
 '=== SIMPLEPRINT PRINTERS ==='
 Get-Printer | Where-Object { $_.PortName -Like 'SimplePrint_*' -or $_.Name -Like '* (SimplePrint)*' } | Format-Table Name,DriverName,PortName,PrinterStatus -AutoSize | Out-String
 '=== PORTS ==='
