@@ -12,13 +12,15 @@ public static class WsdAddressResolver
         Timeout = TimeSpan.FromSeconds(3)
     };
 
+    private static readonly FileLog Log = new(AppPaths.DeviceLog);
+
     /// <summary>
     /// Liefert eine geprüfte, vollständige IPP-URL (z. B. http://192.168.1.20:631/ipp/print)
     /// für einen WSD-Drucker. Kann keine funktionierende IPP-Adresse gefunden werden,
     /// wird "" zurückgegeben; der Drucker bleibt dann im WSD-Modus.
     /// Eine bloße IP-Adresse wird bewusst nie zurückgegeben: Add-Printer -IppURL
     /// braucht eine vollständige URL, und Aufrufer schalten bei jedem nicht leeren
-    /// Ergebnis auf IPP um.
+    /// Ergebnis auf IPP um. Jede Entscheidung wird ins Gerätelog geschrieben.
     /// </summary>
     public static async Task<string> ResolveAsync(
         string? deviceUuid,
@@ -26,18 +28,29 @@ public static class WsdAddressResolver
     {
         var host = await ResolveHostAsync(deviceUuid);
         if (string.IsNullOrWhiteSpace(host))
+        {
+            Log.Info($"WSD-Auflösung {deviceUuid}: keine Geräteadresse gefunden (Registry und ARP-Cache ohne Treffer).");
             return "";
+        }
 
         try
         {
-            return await FindIppUrlAsync(host, cancellationToken);
+            var url = await FindIppUrlAsync(host, cancellationToken);
+
+            Log.Info(
+                url.Length == 0
+                    ? $"WSD-Auflösung {deviceUuid}: Adresse {host} gefunden, aber keine IPP-Schnittstelle erreichbar. Der Drucker bleibt im WSD-Modus."
+                    : $"WSD-Auflösung {deviceUuid}: IPP-URL {url} bestätigt.");
+
+            return url;
         }
         catch (OperationCanceledException)
         {
             throw;
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Error($"WSD-Auflösung {deviceUuid}: IPP-Prüfung für {host} fehlgeschlagen", ex);
             return "";
         }
     }
@@ -60,7 +73,13 @@ public static class WsdAddressResolver
 
         for (var i = 0; i < candidates.Length; i++)
         {
-            if (probes[i])
+            if (!probes[i].Ok)
+                Log.Info($"IPP-Prüfung {candidates[i].HttpUrl}: {probes[i].Detail}");
+        }
+
+        for (var i = 0; i < candidates.Length; i++)
+        {
+            if (probes[i].Ok)
                 return candidates[i].HttpUrl;
         }
 
@@ -85,7 +104,7 @@ public static class WsdAddressResolver
 
     // Sendet eine IPP-Get-Printer-Attributes-Anfrage und prüft, ob der Drucker
     // unter dieser URL tatsächlich IPP spricht.
-    private static async Task<bool> ProbeIppAsync(
+    private static async Task<(bool Ok, string Detail)> ProbeIppAsync(
         string url,
         string printerUri,
         CancellationToken ct)
@@ -100,16 +119,26 @@ public static class WsdAddressResolver
 
             using var response = await Http.PostAsync(url, content, timeout.Token);
             if (!response.IsSuccessStatusCode)
-                return false;
+                return (false, $"HTTP {(int)response.StatusCode}");
 
             var body = await response.Content.ReadAsByteArrayAsync(timeout.Token);
+            if (body.Length < 4)
+                return (false, "Antwort zu kurz (kein IPP)");
 
             // Bytes 2-3 enthalten den IPP-Statuscode; alles unter 0x0100 ist "successful".
-            return body.Length >= 4 && ((body[2] << 8) | body[3]) < 0x0100;
+            var status = (body[2] << 8) | body[3];
+            return status < 0x0100
+                ? (true, "OK")
+                : (false, $"IPP-Status 0x{status:X4}");
         }
-        catch
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            return false;
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var message = ex.InnerException?.Message ?? ex.Message;
+            return (false, $"{ex.GetType().Name}: {message}");
         }
     }
 
