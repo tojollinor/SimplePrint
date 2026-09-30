@@ -5,13 +5,9 @@ namespace SimplePrint.Gui;
 
 public sealed class MainForm : Form
 {
-    private sealed class LocalPrinterRow
-    {
-        public string Name { get; set; } = "";
-        public string DriverName { get; set; } = "";
-        public string PortName { get; set; } = "";
-        public string PrinterStatus { get; set; } = "";
-    }
+    private sealed record NetworkPrinterTag(
+        DevicePresence Device,
+        DiscoveredPrinter Printer);
 
     private readonly Label _deviceName = new() { AutoSize = true };
     private readonly Label _version = new() { AutoSize = true };
@@ -303,6 +299,9 @@ public sealed class MainForm : Form
         ownButtons.Controls.Add(MakeButton(
             "Druckerliste aktualisieren",
             async (_, _) => await RefreshOwnPrintersAsync()));
+        ownButtons.Controls.Add(MakeButton(
+            "Freigaben speichern",
+            async (_, _) => await SaveOwnPrinterSelectionAsync()));
 
         own.Controls.Add(_ownPrinters);
         own.Controls.Add(ownInfo);
@@ -321,6 +320,9 @@ public sealed class MainForm : Form
         networkButtons.Controls.Add(MakeButton(
             "Netzwerkdrucker aktualisieren",
             (_, _) => RefreshNetworkPrinterTree()));
+        networkButtons.Controls.Add(MakeButton(
+            "Druckerauswahl speichern",
+            async (_, _) => await SaveNetworkPrinterSelectionAsync()));
 
         network.Controls.Add(_networkPrinters);
         network.Controls.Add(networkInfo);
@@ -475,6 +477,7 @@ public sealed class MainForm : Form
         _ownPrinters.Columns.Add("driver", "Treiber");
         _ownPrinters.Columns.Add("port", "Port");
         _ownPrinters.Columns.Add("status", "Windows-Status");
+        _ownPrinters.CellMouseDown += OwnPrinterMouseDown;
 
         _servers.Columns.Add("name", "Server");
         _servers.Columns.Add("address", "IP-Adresse");
