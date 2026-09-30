@@ -155,7 +155,7 @@ ConvertTo-Json -InputObject $items -Compress
     }
 
     private static string QuoteArgument(string value) =>
-        """ + value.Replace(""", "\\"") + """;
+        "\"" + value.Replace("\"", "\\\"") + "\"";
 
     public static bool IsUnsafeSimplePrintLoop(LocalPrinterInfo printer) =>
         (!string.IsNullOrWhiteSpace(printer.Comment) &&
