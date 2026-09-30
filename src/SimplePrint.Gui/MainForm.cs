@@ -12,6 +12,11 @@ public sealed class MainForm : Form
         DevicePresence Device,
         DiscoveredPrinter Printer);
 
+    private sealed record RemoteDiagnosticsFetch(
+        DevicePresence Device,
+        byte[]? Archive,
+        string? Error);
+
     private readonly Label _deviceName = new() { AutoSize = true };
     private readonly Label _version = new() { AutoSize = true };
     private readonly Label _serviceStatus = new() { AutoSize = true };
@@ -1704,6 +1709,297 @@ public sealed class MainForm : Form
         }
 
         return result;
+    }
+
+    private async Task CreateDiagnosticsAsync()
+    {
+        var includeLocal = _diagnostics.Nodes
+            .Cast<TreeNode>()
+            .Any(x =>
+                x.Tag is string tag &&
+                tag == "local" &&
+                x.Checked);
+
+        var selectedPeers = new Dictionary<Guid, DevicePresence>();
+
+        foreach (TreeNode root in _diagnostics.Nodes)
+        {
+            foreach (TreeNode child in root.Nodes)
+            {
+                if (child.Tag is DevicePresence peer &&
+                    child.Checked &&
+                    peer.DeviceId != Guid.Empty)
+                {
+                    selectedPeers[peer.DeviceId] = peer;
+                }
+            }
+        }
+
+        if (!includeLocal && selectedPeers.Count == 0)
+        {
+            MessageBox.Show(
+                "Bitte mindestens ein Gerät für das Diagnosepaket auswählen.",
+                "SimplePrint Diagnose",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        using var save = new SaveFileDialog
+        {
+            Filter = "ZIP-Datei|*.zip",
+            FileName = $"SimplePrint-Diagnose-{DateTime.Now:yyyyMMdd-HHmmss}.zip"
+        };
+
+        if (save.ShowDialog(this) != DialogResult.OK)
+            return;
+
+        try
+        {
+            SetBusy("Diagnosepakete werden gesammelt …");
+
+            var manifest = new List<string>
+            {
+                $"SimplePrint Diagnose · {DateTimeOffset.Now:O}",
+                $"Erstellt auf: {_config.DeviceName} ({_config.DeviceId})",
+                $"Dieses Gerät ausgewählt: {(includeLocal ? "Ja" : "Nein")}",
+                $"Entfernte Geräte ausgewählt: {selectedPeers.Count}",
+                ""
+            };
+
+            await using var output = new FileStream(
+                save.FileName,
+                FileMode.Create,
+                FileAccess.ReadWrite,
+                FileShare.None);
+
+            using var zip = new ZipArchive(
+                output,
+                ZipArchiveMode.Create,
+                leaveOpen: false);
+
+            var included = 0;
+            var failed = 0;
+
+            if (includeLocal)
+            {
+                SetBusy($"Diagnose von '{_config.DeviceName}' wird erstellt …");
+
+                var localArchive = await UnifiedDiagnosticsBuilder.CreateArchiveAsync(
+                    _config,
+                    _peers);
+
+                await AddArchiveEntryAsync(
+                    zip,
+                    $"devices/{MakeSafeEntryName(_config.DeviceName)}-{_config.DeviceId.ToString("N")[..8]}.zip",
+                    localArchive);
+
+                included++;
+                manifest.Add(
+                    $"OK | Dieses Gerät | {_config.DeviceName} | {_config.DeviceId}");
+            }
+
+            if (selectedPeers.Count > 0)
+            {
+                using var limiter = new SemaphoreSlim(4, 4);
+
+                var tasks = selectedPeers.Values.Select(async peer =>
+                {
+                    await limiter.WaitAsync();
+                    try
+                    {
+                        return await FetchRemoteDiagnosticsAsync(peer);
+                    }
+                    finally
+                    {
+                        limiter.Release();
+                    }
+                });
+
+                var results = await Task.WhenAll(tasks);
+
+                foreach (var result in results.OrderBy(
+                             x => x.Device.DeviceName,
+                             StringComparer.CurrentCultureIgnoreCase))
+                {
+                    var device = result.Device;
+                    var safeName = MakeSafeEntryName(device.DeviceName);
+                    var shortId = device.DeviceId.ToString("N")[..8];
+
+                    if (result.Archive is not null)
+                    {
+                        await AddArchiveEntryAsync(
+                            zip,
+                            $"devices/{safeName}-{shortId}.zip",
+                            result.Archive);
+
+                        included++;
+                        manifest.Add(
+                            $"OK | {device.DeviceName} | {device.DeviceId} | " +
+                            $"{device.Address}:{device.DiagnosticsPort} | Version {device.AppVersion}");
+                    }
+                    else
+                    {
+                        failed++;
+                        var error =
+                            result.Error ??
+                            "Das Gerät hat kein Diagnosepaket geliefert.";
+
+                        var errorEntry = zip.CreateEntry(
+                            $"errors/{safeName}-{shortId}.txt",
+                            CompressionLevel.Optimal);
+
+                        await using (var stream = errorEntry.Open())
+                        await using (var writer = new StreamWriter(stream, Encoding.UTF8))
+                        {
+                            await writer.WriteLineAsync(
+                                $"Gerät: {device.DeviceName}");
+                            await writer.WriteLineAsync(
+                                $"DeviceId: {device.DeviceId}");
+                            await writer.WriteLineAsync(
+                                $"Adresse: {device.Address}:{device.DiagnosticsPort}");
+                            await writer.WriteLineAsync(
+                                $"Fehler: {error}");
+                        }
+
+                        manifest.Add(
+                            $"FEHLER | {device.DeviceName} | {device.DeviceId} | " +
+                            $"{device.Address}:{device.DiagnosticsPort} | {error}");
+                    }
+                }
+            }
+
+            var manifestEntry = zip.CreateEntry(
+                "manifest.txt",
+                CompressionLevel.Optimal);
+
+            await using (var stream = manifestEntry.Open())
+            await using (var writer = new StreamWriter(stream, Encoding.UTF8))
+            {
+                await writer.WriteAsync(
+                    string.Join(Environment.NewLine, manifest));
+            }
+
+            SetStatus(
+                failed == 0
+                    ? $"✓ Diagnosepaket erstellt · {included} Gerät(e) enthalten"
+                    : $"⚠ Diagnosepaket erstellt · {included} enthalten · {failed} nicht abrufbar");
+
+            MessageBox.Show(
+                failed == 0
+                    ? $"Diagnosepaket wurde erstellt.\r\n\r\nEnthaltene Geräte: {included}"
+                    : $"Diagnosepaket wurde erstellt.\r\n\r\n" +
+                      $"Enthaltene Geräte: {included}\r\n" +
+                      $"Nicht abrufbar: {failed}\r\n\r\n" +
+                      "Fehlgeschlagene Abrufe sind im Ordner 'errors' dokumentiert.",
+                "SimplePrint Diagnose",
+                MessageBoxButtons.OK,
+                failed == 0
+                    ? MessageBoxIcon.Information
+                    : MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Diagnosepaket konnte nicht erstellt werden");
+            MessageBox.Show(
+                ex.Message,
+                "SimplePrint Diagnose",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private async Task<RemoteDiagnosticsFetch> FetchRemoteDiagnosticsAsync(
+        DevicePresence device)
+    {
+        if (device.DiagnosticsPort <= 0)
+        {
+            return new RemoteDiagnosticsFetch(
+                device,
+                null,
+                "Das Gerät veröffentlicht keinen Diagnose-Port.");
+        }
+
+        if (device.ProtocolVersion != Protocol.Version)
+        {
+            return new RemoteDiagnosticsFetch(
+                device,
+                null,
+                $"Inkompatibles Protokoll P{device.ProtocolVersion}; benötigt wird P{Protocol.Version}.");
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(
+                TimeSpan.FromSeconds(70));
+
+            using var tcp = new TcpClient { NoDelay = true };
+
+            await tcp.ConnectAsync(
+                device.Address,
+                device.DiagnosticsPort,
+                timeout.Token);
+
+            using var stream = tcp.GetStream();
+
+            await stream.WriteAsync(
+                Protocol.CreateDiagnosticsRequest(_config.DeviceId),
+                timeout.Token);
+
+            await stream.FlushAsync(timeout.Token);
+
+            var response = await Protocol.ReadDiagnosticsResponseAsync(
+                stream,
+                timeout.Token);
+
+            return response.Archive is null
+                ? new RemoteDiagnosticsFetch(
+                    device,
+                    null,
+                    response.Error ?? "Das Gerät hat kein Diagnosepaket geliefert.")
+                : new RemoteDiagnosticsFetch(
+                    device,
+                    response.Archive,
+                    null);
+        }
+        catch (Exception ex)
+        {
+            return new RemoteDiagnosticsFetch(
+                device,
+                null,
+                ex.Message);
+        }
+    }
+
+    private static async Task AddArchiveEntryAsync(
+        ZipArchive zip,
+        string entryName,
+        byte[] archive)
+    {
+        var entry = zip.CreateEntry(
+            entryName,
+            CompressionLevel.NoCompression);
+
+        await using var stream = entry.Open();
+        await stream.WriteAsync(archive);
+    }
+
+    private static string MakeSafeEntryName(string value)
+    {
+        var safe = string.IsNullOrWhiteSpace(value)
+            ? "Gerät"
+            : value.Trim();
+
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+            safe = safe.Replace(invalid, '_');
+
+        return safe
+            .Replace('/', '_')
+            .Replace('\\', '_');
     }
 
     private void RefreshSettings()
