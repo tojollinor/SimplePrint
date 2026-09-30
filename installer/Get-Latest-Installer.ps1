@@ -1,5 +1,6 @@
 param(
-  [Parameter(Mandatory=$true)][string]$OutputPath
+  [Parameter(Mandatory=$true)][string]$UrlOutputPath,
+  [Parameter(Mandatory=$true)][string]$HashOutputPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,7 +23,19 @@ if (-not $asset -or [string]::IsNullOrWhiteSpace([string]$asset.browser_download
   throw 'Das aktuelle SimplePrint-Release enthält keinen Offline-Installer.'
 }
 
+$utf8 = [System.Text.UTF8Encoding]::new($false)
+
 [System.IO.File]::WriteAllText(
-  $OutputPath,
+  $UrlOutputPath,
   [string]$asset.browser_download_url,
-  [System.Text.UTF8Encoding]::new($false))
+  $utf8)
+
+$digest = [string]$asset.digest
+if ($digest.StartsWith('sha256:', [System.StringComparison]::OrdinalIgnoreCase)) {
+  $digest = $digest.Substring(7)
+}
+
+[System.IO.File]::WriteAllText(
+  $HashOutputPath,
+  $digest,
+  $utf8)
