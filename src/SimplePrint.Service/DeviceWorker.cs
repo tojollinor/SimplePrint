@@ -194,8 +194,6 @@ public sealed class DeviceWorker : BackgroundService
                 !string.IsNullOrWhiteSpace(p.DeviceUuid))
             .ToList();
 
-        var changed = false;
-
         foreach (var candidate in candidates)
         {
             try
@@ -212,7 +210,6 @@ public sealed class DeviceWorker : BackgroundService
 
                     live.TransportMode = PrinterTransport.Ipp;
                     live.DirectAddress = address;
-                    changed = true;
                 }
 
                 _log.Info(
@@ -226,13 +223,6 @@ public sealed class DeviceWorker : BackgroundService
             }
         }
 
-        if (!changed)
-            return;
-
-        lock (_configLock)
-            UnifiedConfigStore.Save(_config);
-
-        _configWriteUtc = File.GetLastWriteTimeUtc(AppPaths.DeviceConfig);
     }
 
     private async Task EnsurePrinterSharesAsync()
