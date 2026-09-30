@@ -517,9 +517,11 @@ if($wanted.Count -gt 0) {
                     (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString()
                     ?? "";
 
+                _peers.TryGetValue(requesterId, out var requester);
+
                 var authorized =
                     requesterId != Guid.Empty &&
-                    _peers.TryGetValue(requesterId, out var requester) &&
+                    requester is not null &&
                     DateTimeOffset.Now - requester.LastSeen <= TimeSpan.FromSeconds(35) &&
                     string.Equals(
                         requester.Address,
