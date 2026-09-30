@@ -624,6 +624,41 @@ public sealed class MainForm : Form
             : "SimplePrint - Dienst prüfen";
     }
 
+    private void OwnPrinterMouseDown(
+        object? sender,
+        DataGridViewCellMouseEventArgs e)
+    {
+        if (e.RowIndex < 0 ||
+            e.Button != MouseButtons.Left ||
+            e.ColumnIndex != _ownPrinters.Columns["shared"]!.Index)
+        {
+            return;
+        }
+
+        var cellRect = _ownPrinters.GetCellDisplayRectangle(
+            e.ColumnIndex,
+            e.RowIndex,
+            false);
+
+        using var graphics = _ownPrinters.CreateGraphics();
+        var glyphSize = CheckBoxRenderer.GetGlyphSize(
+            graphics,
+            System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal);
+
+        var glyphBounds = new Rectangle(
+            cellRect.Left + Math.Max(0, (cellRect.Width - glyphSize.Width) / 2),
+            cellRect.Top + Math.Max(0, (cellRect.Height - glyphSize.Height) / 2),
+            glyphSize.Width,
+            glyphSize.Height);
+
+        var click = new Point(cellRect.Left + e.X, cellRect.Top + e.Y);
+        if (!glyphBounds.Contains(click))
+            return;
+
+        var cell = _ownPrinters.Rows[e.RowIndex].Cells["shared"];
+        cell.Value = !(cell.Value is bool current && current);
+    }
+
     private async Task RefreshOwnPrintersAsync(bool showBusy = true)
     {
         try
@@ -631,32 +666,19 @@ public sealed class MainForm : Form
             if (showBusy)
                 SetBusy("Lokale Drucker werden gelesen …");
 
-            const string script = """
-$items = @(
-  Get-Printer -ErrorAction SilentlyContinue | ForEach-Object {
-    [pscustomobject]@{
-      Name = [string]$_.Name
-      DriverName = [string]$_.DriverName
-      PortName = [string]$_.PortName
-      PrinterStatus = [string]$_.PrinterStatus
-    }
-  }
-)
-ConvertTo-Json -InputObject $items -Compress -Depth 3
-""";
+            var allPrinters = await UnifiedPrinterHelper.GetPrintersAsync();
+            var blocked = allPrinters
+                .Where(UnifiedPrinterHelper.IsUnsafeSimplePrintLoop)
+                .ToList();
 
-            var result = await PowerShellRunner.RunAsync(script);
-            var printers = result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.StdOut)
-                ? JsonSerializer.Deserialize<List<LocalPrinterRow>>(
-                      result.StdOut.Trim(),
-                      JsonStore.Options) ?? []
-                : [];
+            var printers = allPrinters
+                .Where(x => !UnifiedPrinterHelper.IsUnsafeSimplePrintLoop(x))
+                .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
 
             _ownPrinters.Rows.Clear();
 
-            foreach (var printer in printers.OrderBy(
-                         x => x.Name,
-                         StringComparer.CurrentCultureIgnoreCase))
+            foreach (var printer in printers)
             {
                 var shared = _config.SharedPrinters.Any(x =>
                     x.Enabled &&
@@ -664,16 +686,23 @@ ConvertTo-Json -InputObject $items -Compress -Depth 3
                         printer.Name,
                         StringComparison.OrdinalIgnoreCase));
 
-                _ownPrinters.Rows.Add(
+                var row = _ownPrinters.Rows.Add(
                     shared,
                     printer.Name,
                     printer.DriverName,
                     printer.PortName,
                     printer.PrinterStatus);
+
+                _ownPrinters.Rows[row].Tag = printer;
             }
 
             if (showBusy)
-                SetStatus($"✓ {printers.Count} lokale Drucker geladen");
+            {
+                SetStatus(
+                    blocked.Count == 0
+                        ? $"✓ {printers.Count} lokale Drucker geladen"
+                        : $"✓ {printers.Count} lokale Drucker geladen · {blocked.Count} SimplePrint-Schleife(n) ausgeblendet");
+            }
         }
         catch (Exception ex)
         {
@@ -720,7 +749,7 @@ ConvertTo-Json -InputObject $items -Compress -Depth 3
                     device.Nodes.Add(new TreeNode(
                         $"{printer.DisplayName}   [{printer.Status}]")
                     {
-                        Tag = printer,
+                        Tag = new NetworkPrinterTag(peer, printer),
                         Checked = selected
                     });
                 }
