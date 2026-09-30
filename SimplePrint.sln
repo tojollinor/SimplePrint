@@ -14,6 +14,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplePrint.Client.Gui", "s
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplePrint.Service", "src\SimplePrint.Service\SimplePrint.Service.csproj", "{7D74B3C1-67FD-4DB9-A68D-13ECBD9A41F4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplePrint.Gui", "src\SimplePrint.Gui\SimplePrint.Gui.csproj", "{AAE2BBA5-7D4D-4EFC-BEB7-6E0C0FCD519A}"
+EndProject
 Global
   GlobalSection(SolutionConfigurationPlatforms) = preSolution
     Debug|Any CPU = Debug|Any CPU
@@ -44,5 +46,9 @@ Global
     {7D74B3C1-67FD-4DB9-A68D-13ECBD9A41F4}.Debug|Any CPU.Build.0 = Debug|Any CPU
     {7D74B3C1-67FD-4DB9-A68D-13ECBD9A41F4}.Release|Any CPU.ActiveCfg = Release|Any CPU
     {7D74B3C1-67FD-4DB9-A68D-13ECBD9A41F4}.Release|Any CPU.Build.0 = Release|Any CPU
+    {AAE2BBA5-7D4D-4EFC-BEB7-6E0C0FCD519A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {AAE2BBA5-7D4D-4EFC-BEB7-6E0C0FCD519A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {AAE2BBA5-7D4D-4EFC-BEB7-6E0C0FCD519A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {AAE2BBA5-7D4D-4EFC-BEB7-6E0C0FCD519A}.Release|Any CPU.Build.0 = Release|Any CPU
   EndGlobalSection
 EndGlobal
