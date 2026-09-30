@@ -4,6 +4,12 @@ namespace SimplePrint.Gui;
 
 internal static class Program
 {
+    private const string InstanceMutexName = @"Local\SimplePrint.Gui.Unified";
+    private const string ShowEventName = @"Local\SimplePrint.Gui.Unified.Show";
+
+    private static EventWaitHandle? _showEvent;
+    private static RegisteredWaitHandle? _showRegistration;
+
     public static bool StartInTray { get; private set; }
     public static string? UpdateSuccessVersion { get; private set; }
 
@@ -12,6 +18,11 @@ internal static class Program
     {
         AppPaths.Ensure();
         ApplicationConfiguration.Initialize();
+
+        // Unerwartete Fehler in Ereignishandlern zeigen eine Meldung, statt die
+        // gesamte Oberfläche zu beenden.
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) => ShowUnexpectedError(e.Exception);
 
         if (HasArgument(args, "--bootstrap-update"))
         {
@@ -34,8 +45,97 @@ internal static class Program
             string.IsNullOrWhiteSpace(UpdateSuccessVersion) &&
             HasArgument(args, "--tray");
 
-        WindowsAppIdentity.Set("SimplePrint.Unified");
-        Application.Run(new MainForm());
+        using var instanceMutex = new Mutex(false, InstanceMutexName);
+        var ownsMutex = TryAcquire(
+            instanceMutex,
+            string.IsNullOrWhiteSpace(UpdateSuccessVersion)
+                ? TimeSpan.Zero
+                : TimeSpan.FromSeconds(15));
+
+        if (!ownsMutex)
+        {
+            // Es läuft bereits eine Oberfläche: diese nach vorne holen,
+            // statt eine zweite Instanz zu starten.
+            if (!StartInTray)
+                SignalExistingInstance();
+
+            return;
+        }
+
+        try
+        {
+            _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
+
+            WindowsAppIdentity.Set("SimplePrint.Unified");
+            Application.Run(new MainForm());
+        }
+        finally
+        {
+            _showRegistration?.Unregister(null);
+            _showEvent?.Dispose();
+
+            try
+            {
+                instanceMutex.ReleaseMutex();
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    public static void RegisterShowRequestHandler(Action handler)
+    {
+        if (_showEvent is null)
+            return;
+
+        _showRegistration = ThreadPool.RegisterWaitForSingleObject(
+            _showEvent,
+            (_, _) => handler(),
+            null,
+            Timeout.Infinite,
+            false);
+    }
+
+    private static bool TryAcquire(Mutex mutex, TimeSpan wait)
+    {
+        try
+        {
+            return mutex.WaitOne(wait);
+        }
+        catch (AbandonedMutexException)
+        {
+            // Die vorherige Instanz wurde hart beendet; der Mutex gehört jetzt uns.
+            return true;
+        }
+    }
+
+    private static void SignalExistingInstance()
+    {
+        try
+        {
+            using var existing = EventWaitHandle.OpenExisting(ShowEventName);
+            existing.Set();
+        }
+        catch
+        {
+        }
+    }
+
+    private static void ShowUnexpectedError(Exception ex)
+    {
+        try
+        {
+            MessageBox.Show(
+                "Ein unerwarteter Fehler ist aufgetreten. SimplePrint läuft weiter." +
+                Environment.NewLine + Environment.NewLine + ex.Message,
+                "SimplePrint",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        catch
+        {
+        }
     }
 
     private static void RunUpdateBootstrap()

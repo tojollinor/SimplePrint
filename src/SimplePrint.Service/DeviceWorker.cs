@@ -16,27 +16,44 @@ public sealed class DeviceWorker : BackgroundService
         public required Task Task { get; init; }
     }
 
+    private static readonly TimeSpan ListenerRetryInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PortRetryInterval = TimeSpan.FromSeconds(10);
+
     private readonly FileLog _log = new(AppPaths.DeviceLog);
     private readonly ConcurrentDictionary<Guid, DevicePresence> _peers = new();
     private readonly ConcurrentDictionary<Guid, PrintJobRecord> _jobs = new();
+    private readonly ConcurrentDictionary<string, string> _printerStatus =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ListenerState> _listeners =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<int> _failedListenerPorts = [];
     private readonly SemaphoreSlim _jobSaveLock = new(1, 1);
     private readonly SemaphoreSlim _diagnosticsLock = new(1, 1);
+    private readonly SemaphoreSlim _sharingLock = new(1, 1);
     private readonly object _configLock = new();
     private readonly object _listenerLock = new();
 
     private SimplePrintConfig _config = new();
     private DateTime _configWriteUtc;
+    private HashSet<Guid> _lastSavedJobIds = [];
+    private DateTime _jobsFileWriteUtc = DateTime.MinValue;
+    private volatile bool _listenerRetryNeeded;
+    private DateTime _lastListenerSyncUtc = DateTime.MinValue;
+    private int _sharingQueued;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Sofort an den Dienststeuerungs-Manager zurückgeben, damit der Start
+        // nie durch langsame Initialisierung blockiert wird.
+        await Task.Yield();
+
         LoadConfig(true);
         LoadKnownJobs();
 
-        await ResolveConfiguredWsdRoutesAsync();
-        await EnsurePrinterSharesAsync();
-        await SyncListenersAsync(stoppingToken);
+        // Die lokalen Proxys müssen sofort lauschen. Freigaben, Firewall und
+        // WSD-Auflösung sind langsam und laufen deshalb im Hintergrund.
+        SyncListeners(stoppingToken);
+        RequestSharingRefresh();
 
         var cfg = SnapshotConfig();
         _log.Info(
@@ -79,9 +96,7 @@ public sealed class DeviceWorker : BackgroundService
     {
         try
         {
-            var write = File.Exists(AppPaths.DeviceConfig)
-                ? File.GetLastWriteTimeUtc(AppPaths.DeviceConfig)
-                : DateTime.MinValue;
+            var write = GetFileWriteUtc(AppPaths.DeviceConfig);
 
             if (!force && write == _configWriteUtc)
                 return;
@@ -91,9 +106,7 @@ public sealed class DeviceWorker : BackgroundService
             lock (_configLock)
                 _config = config;
 
-            _configWriteUtc = File.Exists(AppPaths.DeviceConfig)
-                ? File.GetLastWriteTimeUtc(AppPaths.DeviceConfig)
-                : DateTime.MinValue;
+            _configWriteUtc = GetFileWriteUtc(AppPaths.DeviceConfig);
 
             _log.Info(
                 $"Konfiguration geladen: {config.SharedPrinters.Count} eigene Freigaben, " +
@@ -101,7 +114,23 @@ public sealed class DeviceWorker : BackgroundService
         }
         catch (Exception ex)
         {
+            // Die bisherige Konfiguration bleibt aktiv; beim nächsten Durchlauf
+            // wird erneut geladen.
             _log.Error("Konfiguration konnte nicht geladen werden", ex);
+        }
+    }
+
+    private static DateTime GetFileWriteUtc(string path)
+    {
+        try
+        {
+            return File.Exists(path)
+                ? File.GetLastWriteTimeUtc(path)
+                : DateTime.MinValue;
+        }
+        catch
+        {
+            return DateTime.MinValue;
         }
     }
 
@@ -109,12 +138,15 @@ public sealed class DeviceWorker : BackgroundService
     {
         try
         {
-            foreach (var job in JsonStore.LoadOrCreate(
-                         AppPaths.DeviceJobs,
-                         () => new List<PrintJobRecord>()))
-            {
+            var loaded = JsonStore.LoadOrCreate(
+                AppPaths.DeviceJobs,
+                () => new List<PrintJobRecord>());
+
+            foreach (var job in loaded)
                 _jobs[job.JobId] = job;
-            }
+
+            _lastSavedJobIds = loaded.Select(x => x.JobId).ToHashSet();
+            _jobsFileWriteUtc = GetFileWriteUtc(AppPaths.DeviceJobs);
         }
         catch (Exception ex)
         {
@@ -127,6 +159,8 @@ public sealed class DeviceWorker : BackgroundService
         await _jobSaveLock.WaitAsync();
         try
         {
+            ApplyExternalJobDeletions();
+
             var keep = _jobs.Values
                 .OrderByDescending(x => x.UpdatedAt)
                 .Take(300)
@@ -137,6 +171,9 @@ public sealed class DeviceWorker : BackgroundService
                 _jobs.TryRemove(old, out _);
 
             JsonStore.Save(AppPaths.DeviceJobs, keep);
+
+            _lastSavedJobIds = keepIds;
+            _jobsFileWriteUtc = GetFileWriteUtc(AppPaths.DeviceJobs);
         }
         catch (Exception ex)
         {
@@ -146,6 +183,46 @@ public sealed class DeviceWorker : BackgroundService
         {
             _jobSaveLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Die GUI löscht Aufträge direkt in jobs.json. Aufträge, die beim letzten
+    /// eigenen Speichern in der Datei standen und jetzt fehlen, wurden gelöscht
+    /// und werden auch aus dem Speicher des Dienstes entfernt, damit sie nicht
+    /// wieder auftauchen.
+    /// </summary>
+    private void ApplyExternalJobDeletions()
+    {
+        var write = GetFileWriteUtc(AppPaths.DeviceJobs);
+        if (write == _jobsFileWriteUtc)
+            return;
+
+        List<PrintJobRecord> onDisk;
+        try
+        {
+            onDisk = JsonStore.LoadOrCreate(
+                AppPaths.DeviceJobs,
+                () => new List<PrintJobRecord>());
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Druckauftragsliste konnte nicht abgeglichen werden", ex);
+            return;
+        }
+
+        var diskIds = onDisk.Select(x => x.JobId).ToHashSet();
+        var removed = 0;
+
+        foreach (var id in _lastSavedJobIds)
+        {
+            if (!diskIds.Contains(id) && _jobs.TryRemove(id, out _))
+                removed++;
+        }
+
+        _jobsFileWriteUtc = write;
+
+        if (removed > 0)
+            _log.Info($"{removed} in der Oberfläche gelöschte(r) Druckauftrag/-aufträge aus der Historie entfernt.");
     }
 
     private void SavePeers()
@@ -169,18 +246,68 @@ public sealed class DeviceWorker : BackgroundService
     {
         while (!ct.IsCancellationRequested)
         {
-            var before = _configWriteUtc;
-            LoadConfig();
+            try
+            {
+                var before = _configWriteUtc;
+                LoadConfig();
 
-            if (before != _configWriteUtc)
+                if (before != _configWriteUtc)
+                {
+                    // Zuerst die Proxys (schnell), dann Freigaben im Hintergrund (langsam).
+                    SyncListeners(ct);
+                    RequestSharingRefresh();
+                }
+                else if (_listenerRetryNeeded &&
+                         DateTime.UtcNow - _lastListenerSyncUtc >= ListenerRetryInterval)
+                {
+                    SyncListeners(ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Konfigurationsabgleich fehlgeschlagen", ex);
+            }
+
+            try
+            {
+                await Task.Delay(1200, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Plant WSD-Auflösung, Windows-Freigaben und Druckerstatus im Hintergrund ein.
+    /// Mehrere Anfragen kurz hintereinander werden zu einem Durchlauf zusammengefasst.
+    /// </summary>
+    private void RequestSharingRefresh()
+    {
+        if (Interlocked.Exchange(ref _sharingQueued, 1) == 1)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            await _sharingLock.WaitAsync();
+            Interlocked.Exchange(ref _sharingQueued, 0);
+
+            try
             {
                 await ResolveConfiguredWsdRoutesAsync();
                 await EnsurePrinterSharesAsync();
-                await SyncListenersAsync(ct);
+                RefreshLocalPrinterStatuses();
             }
-
-            await Task.Delay(1200, ct);
-        }
+            catch (Exception ex)
+            {
+                _log.Error("Freigaben konnten nicht vorbereitet werden", ex);
+            }
+            finally
+            {
+                _sharingLock.Release();
+            }
+        });
     }
 
     private async Task ResolveConfiguredWsdRoutesAsync()
@@ -224,7 +351,6 @@ public sealed class DeviceWorker : BackgroundService
                     ex);
             }
         }
-
     }
 
     private async Task EnsurePrinterSharesAsync()
@@ -249,6 +375,7 @@ public sealed class DeviceWorker : BackgroundService
             var script = $@"
 $ErrorActionPreference='Stop'
 $wanted={wantedArray}
+$failed = @()
 
 foreach($printer in @(Get-Printer -ErrorAction SilentlyContinue |
   Where-Object {{ $_.Shared -and ([string]$_.ShareName) -like 'SimplePrint-*' }})) {{
@@ -262,17 +389,34 @@ foreach($printer in @(Get-Printer -ErrorAction SilentlyContinue |
             {
                 var shareName = PrinterTransport.GetWindowsShareName(printer.Id);
                 script += $@"
-$p = Get-Printer -Name {PowerShellRunner.Quote(printer.QueueName)} -ErrorAction Stop
-Set-Printer -Name $p.Name -Shared $true -ShareName {PowerShellRunner.Quote(shareName)} -ErrorAction Stop
+try {{
+  $p = Get-Printer -Name {PowerShellRunner.Quote(printer.QueueName)} -ErrorAction Stop
+  if(-not $p.Shared -or [string]$p.ShareName -ne {PowerShellRunner.Quote(shareName)}) {{
+    Set-Printer -Name $p.Name -Shared $true -ShareName {PowerShellRunner.Quote(shareName)} -ErrorAction Stop
+  }}
+}} catch {{
+  $failed += ({PowerShellRunner.Quote(printer.QueueName)} + ': ' + $_.Exception.Message)
+}}
 ";
             }
 
             script += @"
-Get-NetFirewallRule -Name 'SimplePrint-PrintShare-SMB' -ErrorAction SilentlyContinue |
-  Remove-NetFirewallRule
+$smbRule = Get-NetFirewallRule -Name 'SimplePrint-PrintShare-SMB' -ErrorAction SilentlyContinue
 
 if($wanted.Count -gt 0) {
-  New-NetFirewallRule -Name 'SimplePrint-PrintShare-SMB' -DisplayName 'SimplePrint Printer Sharing SMB' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 445 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+  if(-not $smbRule) {
+    New-NetFirewallRule -Name 'SimplePrint-PrintShare-SMB' -DisplayName 'SimplePrint Printer Sharing SMB' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 445 -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+  }
+  elseif([string]$smbRule.Enabled -ne 'True') {
+    $smbRule | Enable-NetFirewallRule
+  }
+}
+elseif($smbRule) {
+  $smbRule | Remove-NetFirewallRule
+}
+
+if($failed.Count -gt 0) {
+  throw ('Freigabe fehlgeschlagen: ' + ($failed -join '; '))
 }
 ";
 
@@ -291,56 +435,137 @@ if($wanted.Count -gt 0) {
         }
     }
 
+    /// <summary>
+    /// Prüft die eigenen freigegebenen Drucker außerhalb der Discovery-Antwort.
+    /// OpenPrinter kann bei nicht erreichbaren Druckern mehrere Sekunden dauern;
+    /// in der Antwort würde das Geräte sporadisch "verschwinden" lassen.
+    /// </summary>
+    private void RefreshLocalPrinterStatuses()
+    {
+        try
+        {
+            var printers = SnapshotConfig().SharedPrinters
+                .Where(p => p.Enabled)
+                .ToList();
+
+            foreach (var printer in printers)
+            {
+                bool ok;
+                try
+                {
+                    ok = RawPrinter.CanOpen(printer.QueueName);
+                }
+                catch
+                {
+                    ok = false;
+                }
+
+                _printerStatus[printer.QueueName] = ok ? "Bereit" : "Nicht verfügbar";
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Druckerstatus konnte nicht geprüft werden", ex);
+        }
+    }
+
     private async Task RunDiscoveryResponderAsync(CancellationToken ct)
     {
         var cfg = SnapshotConfig();
-        using var udp = new UdpClient(new IPEndPoint(IPAddress.Any, cfg.DiscoveryPort));
+        UdpClient? udp = null;
+        var logged = false;
 
-        _log.Info($"Geräteerkennung lauscht auf UDP {cfg.DiscoveryPort}.");
-
-        while (!ct.IsCancellationRequested)
+        while (udp is null && !ct.IsCancellationRequested)
         {
             try
             {
-                var result = await udp.ReceiveAsync(ct);
-
-                if (result.Buffer.AsSpan().SequenceEqual(Protocol.DeviceDiscoveryRequestBytes))
+                udp = new UdpClient(new IPEndPoint(IPAddress.Any, cfg.DiscoveryPort));
+            }
+            catch (SocketException ex)
+            {
+                if (!logged)
                 {
-                    var response = BuildDeviceAnnouncement();
-                    await udp.SendAsync(
-                        Protocol.SerializeDeviceAnnouncement(response),
-                        result.RemoteEndPoint,
-                        ct);
-                    continue;
+                    _log.Error(
+                        $"UDP {cfg.DiscoveryPort} für die Geräteerkennung kann nicht geöffnet werden. " +
+                        "SimplePrint versucht es alle 10 s erneut",
+                        ex);
+                    logged = true;
                 }
 
-                // Übergangskompatibilität, bis die alte getrennte GUI vollständig entfernt ist.
-                if (result.Buffer.AsSpan().SequenceEqual(Protocol.DiscoveryRequestBytes))
+                try
                 {
-                    var current = SnapshotConfig();
-                    var legacy = new DiscoveryAnnouncement
+                    await Task.Delay(PortRetryInterval, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        }
+
+        if (udp is null)
+            return;
+
+        using (udp)
+        {
+            Discovery.DisableUdpConnectionReset(udp);
+            _log.Info($"Geräteerkennung lauscht auf UDP {cfg.DiscoveryPort}.");
+
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    var result = await udp.ReceiveAsync(ct);
+
+                    if (result.Buffer.AsSpan().SequenceEqual(Protocol.DeviceDiscoveryRequestBytes))
                     {
-                        AppVersion = GetAppVersion(),
-                        ServerId = current.DeviceId,
-                        ServerName = current.DeviceName,
-                        GatewayPort = current.GatewayPort,
-                        Printers = BuildDiscoveredPrinters(current.SharedPrinters)
-                    };
+                        var response = BuildDeviceAnnouncement();
+                        await udp.SendAsync(
+                            Protocol.SerializeDeviceAnnouncement(response),
+                            result.RemoteEndPoint,
+                            ct);
+                        continue;
+                    }
 
-                    await udp.SendAsync(
-                        Protocol.SerializeAnnouncement(legacy),
-                        result.RemoteEndPoint,
-                        ct);
+                    // Übergangskompatibilität, bis die alte getrennte GUI vollständig entfernt ist.
+                    if (result.Buffer.AsSpan().SequenceEqual(Protocol.DiscoveryRequestBytes))
+                    {
+                        var current = SnapshotConfig();
+                        var legacy = new DiscoveryAnnouncement
+                        {
+                            AppVersion = GetAppVersion(),
+                            ServerId = current.DeviceId,
+                            ServerName = current.DeviceName,
+                            GatewayPort = current.GatewayPort,
+                            Printers = BuildDiscoveredPrinters(current.SharedPrinters)
+                        };
+
+                        await udp.SendAsync(
+                            Protocol.SerializeAnnouncement(legacy),
+                            result.RemoteEndPoint,
+                            ct);
+                    }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _log.Error("Geräteerkennung fehlgeschlagen", ex);
-                await Task.Delay(500, ct);
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset)
+                {
+                }
+                catch (Exception ex)
+                {
+                    _log.Error("Geräteerkennung fehlgeschlagen", ex);
+
+                    try
+                    {
+                        await Task.Delay(500, ct);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -363,7 +588,7 @@ if($wanted.Count -gt 0) {
         };
     }
 
-    private static List<DiscoveredPrinter> BuildDiscoveredPrinters(
+    private List<DiscoveredPrinter> BuildDiscoveredPrinters(
         IEnumerable<SharedPrinterConfig> printers) =>
         printers
             .Where(p => p.Enabled)
@@ -378,9 +603,9 @@ if($wanted.Count -gt 0) {
                 TransportMode = p.TransportMode,
                 DirectAddress = p.DirectAddress,
                 DeviceUuid = p.DeviceUuid,
-                Status = RawPrinter.CanOpen(p.QueueName)
-                    ? "Bereit"
-                    : "Nicht verfügbar"
+                Status = _printerStatus.TryGetValue(p.QueueName, out var status)
+                    ? status
+                    : "Wird geprüft"
             })
             .ToList();
 
@@ -388,8 +613,20 @@ if($wanted.Count -gt 0) {
     {
         while (!ct.IsCancellationRequested)
         {
-            await DiscoverNowAsync(ct);
-            await RefreshPendingJobStatusesAsync(ct);
+            try
+            {
+                RefreshLocalPrinterStatuses();
+                await DiscoverNowAsync(ct);
+                await RefreshPendingJobStatusesAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Geräteabgleich fehlgeschlagen", ex);
+            }
 
             try
             {
@@ -465,11 +702,63 @@ if($wanted.Count -gt 0) {
             LastSeen = device.SeenAt
         };
 
+    private async Task<TcpListener?> StartTcpListenerAsync(
+        IPAddress address,
+        int port,
+        int backlog,
+        string purpose,
+        CancellationToken ct)
+    {
+        var logged = false;
+
+        while (!ct.IsCancellationRequested)
+        {
+            var listener = new TcpListener(address, port);
+
+            try
+            {
+                listener.Start(backlog);
+                return listener;
+            }
+            catch (SocketException ex)
+            {
+                listener.Stop();
+
+                if (!logged)
+                {
+                    _log.Error(
+                        $"{purpose}: TCP {port} kann nicht geöffnet werden (Port belegt?). " +
+                        "SimplePrint versucht es alle 10 s erneut",
+                        ex);
+                    logged = true;
+                }
+
+                try
+                {
+                    await Task.Delay(PortRetryInterval, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return null;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private async Task RunDiagnosticsAsync(CancellationToken ct)
     {
         var cfg = SnapshotConfig();
-        var listener = new TcpListener(IPAddress.Any, cfg.DiagnosticsPort);
-        listener.Start(8);
+        var listener = await StartTcpListenerAsync(
+            IPAddress.Any,
+            cfg.DiagnosticsPort,
+            8,
+            "Diagnose-Endpunkt",
+            ct);
+
+        if (listener is null)
+            return;
 
         _log.Info($"Diagnose-Endpunkt lauscht auf TCP {cfg.DiagnosticsPort}.");
 
@@ -477,14 +766,25 @@ if($wanted.Count -gt 0) {
         {
             while (!ct.IsCancellationRequested)
             {
-                var client = await listener.AcceptTcpClientAsync(ct);
+                TcpClient client;
+                try
+                {
+                    client = await listener.AcceptTcpClientAsync(ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (SocketException ex)
+                {
+                    _log.Error("Diagnoseverbindung konnte nicht angenommen werden", ex);
+                    continue;
+                }
+
                 _ = Task.Run(
                     () => HandleDiagnosticsRequestAsync(client, ct),
                     CancellationToken.None);
             }
-        }
-        catch (OperationCanceledException)
-        {
         }
         finally
         {
@@ -498,7 +798,15 @@ if($wanted.Count -gt 0) {
     {
         using (client)
         {
-            await _diagnosticsLock.WaitAsync(serviceCt);
+            try
+            {
+                await _diagnosticsLock.WaitAsync(serviceCt);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
             try
             {
                 client.NoDelay = true;
@@ -591,8 +899,15 @@ if($wanted.Count -gt 0) {
     private async Task RunGatewayAsync(CancellationToken ct)
     {
         var cfg = SnapshotConfig();
-        var listener = new TcpListener(IPAddress.Any, cfg.GatewayPort);
-        listener.Start(64);
+        var listener = await StartTcpListenerAsync(
+            IPAddress.Any,
+            cfg.GatewayPort,
+            64,
+            "Print-Gateway",
+            ct);
+
+        if (listener is null)
+            return;
 
         _log.Info($"Print-Gateway lauscht auf TCP {cfg.GatewayPort}.");
 
@@ -600,14 +915,25 @@ if($wanted.Count -gt 0) {
         {
             while (!ct.IsCancellationRequested)
             {
-                var client = await listener.AcceptTcpClientAsync(ct);
+                TcpClient client;
+                try
+                {
+                    client = await listener.AcceptTcpClientAsync(ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (SocketException ex)
+                {
+                    _log.Error("Gateway-Verbindung konnte nicht angenommen werden", ex);
+                    continue;
+                }
+
                 _ = Task.Run(
                     () => HandleIncomingPrintAsync(client, ct),
                     CancellationToken.None);
             }
-        }
-        catch (OperationCanceledException)
-        {
         }
         finally
         {
@@ -920,10 +1246,13 @@ if($wanted.Count -gt 0) {
         }
     }
 
-    private Task SyncListenersAsync(CancellationToken serviceCt)
+    private void SyncListeners(CancellationToken serviceCt)
     {
         lock (_listenerLock)
         {
+            _lastListenerSyncUtc = DateTime.UtcNow;
+            var retryNeeded = false;
+
             var wanted = SnapshotConfig().NetworkPrinters
                 .Where(m =>
                     m.Enabled &&
@@ -961,12 +1290,36 @@ if($wanted.Count -gt 0) {
                     _listeners.Remove(mapping.PortName);
                 }
 
-                var linked =
-                    CancellationTokenSource.CreateLinkedTokenSource(serviceCt);
                 var listener = new TcpListener(
                     IPAddress.Loopback,
                     mapping.LocalProxyPort);
-                listener.Start(16);
+
+                try
+                {
+                    listener.Start(16);
+                }
+                catch (SocketException ex)
+                {
+                    // Ein belegter Port darf nie den ganzen Dienst stoppen.
+                    listener.Stop();
+                    retryNeeded = true;
+
+                    if (_failedListenerPorts.Add(mapping.LocalProxyPort))
+                    {
+                        _log.Error(
+                            $"Lokaler Proxy {mapping.LocalProxyPort} für '{mapping.LocalPrinterName}' " +
+                            $"kann nicht starten (Port belegt?). Neuer Versuch alle " +
+                            $"{ListenerRetryInterval.TotalSeconds:0} s",
+                            ex);
+                    }
+
+                    continue;
+                }
+
+                _failedListenerPorts.Remove(mapping.LocalProxyPort);
+
+                var linked =
+                    CancellationTokenSource.CreateLinkedTokenSource(serviceCt);
 
                 var task = Task.Run(
                     () => AcceptLoopAsync(mapping, listener, linked.Token),
@@ -984,9 +1337,9 @@ if($wanted.Count -gt 0) {
                     $"Lokaler Proxy {mapping.LocalProxyPort} -> " +
                     $"{mapping.SourceDeviceName}/{mapping.PrinterDisplayName} aktiv.");
             }
-        }
 
-        return Task.CompletedTask;
+            _listenerRetryNeeded = retryNeeded;
+        }
     }
 
     private async Task AcceptLoopAsync(
@@ -1207,9 +1560,10 @@ if($wanted.Count -gt 0) {
 
     private async Task RefreshPendingJobStatusesAsync(CancellationToken ct)
     {
+        var ownId = SnapshotConfig().DeviceId;
         var pending = _jobs.Values
             .Where(x =>
-                x.ServerId != SnapshotConfig().DeviceId &&
+                x.ServerId != ownId &&
                 x.CreatedAt > DateTimeOffset.Now.AddDays(-1) &&
                 x.Status is not "Gedruckt" and
                 not "Abgeschlossen" and

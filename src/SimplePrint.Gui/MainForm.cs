@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using SimplePrint.Common;
@@ -66,14 +67,27 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer _liveTimer = new() { Interval = 5000 };
     private readonly NotifyIcon _tray;
 
+    // Buttons, die während einer laufenden Aktion gesperrt werden
+    // (verhindert Doppelklicks und damit z. B. Doppelinstallationen).
+    private readonly List<Button> _actionButtons = [];
+
     private SimplePrintConfig _config = new();
     private List<DevicePresence> _peers = [];
+    private List<DevicePresence> _peerCache = [];
     private bool _allowExit;
     private bool _suppressNetworkTreeCheck;
     private bool _suppressDiagnosticsTreeCheck;
     private bool _updateCheckRunning;
+    private bool _operationRunning;
+    private bool _refreshRunning;
     private string? _lastOfferedUpdate;
     private string _networkCatalogFingerprint = "";
+    private string _relationshipFingerprint = "";
+    private string _diagnosticsFingerprint = "";
+    private string _trayLevel = "";
+    private DateTime _configWriteUtc = DateTime.MinValue;
+    private DateTime _peersWriteUtc = DateTime.MinValue;
+    private DateTime _jobsWriteUtc = DateTime.MinValue;
 
     public MainForm()
     {
@@ -83,6 +97,9 @@ public sealed class MainForm : Form
         MinimumSize = new Size(760, 560);
         StartPosition = FormStartPosition.CenterScreen;
         Branding.ApplyApplicationIcon(this);
+
+        EnableDoubleBuffering(_networkPrinters);
+        EnableDoubleBuffering(_diagnostics);
 
         if (Program.StartInTray)
         {
@@ -97,7 +114,7 @@ public sealed class MainForm : Form
 
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("SimplePrint öffnen", null, (_, _) => ShowFromTray());
-        trayMenu.Items.Add("Aktualisieren", null, async (_, _) => await RefreshAllAsync(true));
+        trayMenu.Items.Add("Aktualisieren", null, async (_, _) => await RefreshRequestedAsync());
         trayMenu.Items.Add("Nach Updates suchen", null, async (_, _) => await CheckForUpdatesAsync(true));
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Beenden", null, (_, _) => ExitApplication());
@@ -181,6 +198,19 @@ public sealed class MainForm : Form
 
         Shown += async (_, _) =>
         {
+            // Ein zweiter Programmstart holt dieses Fenster nach vorne.
+            Program.RegisterShowRequestHandler(() =>
+            {
+                try
+                {
+                    if (IsHandleCreated && !IsDisposed)
+                        BeginInvoke(new Action(ShowFromTray));
+                }
+                catch
+                {
+                }
+            });
+
             if (Program.StartInTray)
             {
                 HideToTray();
@@ -293,9 +323,11 @@ public sealed class MainForm : Form
             Padding = new Padding(8, 6, 8, 2)
         };
 
-        buttons.Controls.Add(MakeButton(
+        var refreshButton = MakeButton(
             "Aktualisieren",
-            async (_, _) => await RefreshAllAsync(true)));
+            async (_, _) => await RefreshRequestedAsync());
+        _actionButtons.Add(refreshButton);
+        buttons.Controls.Add(refreshButton);
 
         buttons.Controls.Add(MakeButton(
             "In Infobereich minimieren",
@@ -369,12 +401,12 @@ public sealed class MainForm : Form
                 "wird direkt pro Drucker verwaltet."
         };
         var ownButtons = BottomButtons();
-        ownButtons.Controls.Add(MakeButton(
+        ownButtons.Controls.Add(MakeActionButton(
             "Druckerliste aktualisieren",
-            async (_, _) => await RefreshOwnPrintersAsync()));
-        ownButtons.Controls.Add(MakeButton(
+            () => RefreshOwnPrintersAsync()));
+        ownButtons.Controls.Add(MakeActionButton(
             "Freigaben speichern",
-            async (_, _) => await SaveOwnPrinterSelectionAsync()));
+            SaveOwnPrinterSelectionAsync));
         ownButtons.Controls.Add(MakeButton(
             "Warteschlange öffnen",
             (_, _) => OpenSelectedOwnPrinterQueue()));
@@ -396,12 +428,16 @@ public sealed class MainForm : Form
                 "Freigegebene Drucker anderer aktiver SimplePrint-Geräte, nach Quellgerät gruppiert."
         };
         var networkButtons = BottomButtons();
-        networkButtons.Controls.Add(MakeButton(
+        networkButtons.Controls.Add(MakeActionButton(
             "Netzwerkdrucker aktualisieren",
-            (_, _) => RefreshNetworkPrinterTree()));
-        networkButtons.Controls.Add(MakeButton(
+            () =>
+            {
+                RefreshNetworkPrinterTree();
+                return Task.CompletedTask;
+            }));
+        networkButtons.Controls.Add(MakeActionButton(
             "Druckerauswahl speichern",
-            async (_, _) => await SaveNetworkPrinterSelectionAsync()));
+            SaveNetworkPrinterSelectionAsync));
         networkButtons.Controls.Add(MakeButton(
             "Warteschlange öffnen",
             (_, _) => OpenSelectedNetworkPrinterQueue()));
@@ -492,9 +528,9 @@ public sealed class MainForm : Form
         };
 
         var buttons = BottomButtons();
-        buttons.Controls.Add(MakeButton(
+        buttons.Controls.Add(MakeActionButton(
             "Diagnosepaket erstellen",
-            async (_, _) => await CreateDiagnosticsAsync()));
+            CreateDiagnosticsAsync));
 
         tab.Controls.Add(_diagnostics);
         tab.Controls.Add(info);
@@ -569,17 +605,17 @@ public sealed class MainForm : Form
             Margin = new Padding(0, 6, 0, 12)
         };
 
-        startupButtons.Controls.Add(MakeButton(
+        startupButtons.Controls.Add(MakeActionButton(
             "Autostart aktivieren",
-            async (_, _) => await SetStartupAsync(true)));
+            () => SetStartupAsync(true)));
 
-        startupButtons.Controls.Add(MakeButton(
+        startupButtons.Controls.Add(MakeActionButton(
             "Autostart deaktivieren",
-            async (_, _) => await SetStartupAsync(false)));
+            () => SetStartupAsync(false)));
 
-        startupButtons.Controls.Add(MakeButton(
+        startupButtons.Controls.Add(MakeActionButton(
             "SimplePrint-Dienst neu starten",
-            async (_, _) => await RestartServiceAsync()));
+            RestartServiceAsync));
 
         panel.Controls.Add(startupButtons);
 
@@ -609,17 +645,17 @@ public sealed class MainForm : Form
             Margin = new Padding(0, 6, 0, 12)
         };
 
-        firewallButtons.Controls.Add(MakeButton(
+        firewallButtons.Controls.Add(MakeActionButton(
             "Firewall-Regeln anwenden",
-            async (_, _) => await ApplyFirewallAsync()));
+            ApplyFirewallAsync));
 
-        firewallButtons.Controls.Add(MakeButton(
+        firewallButtons.Controls.Add(MakeActionButton(
             "Firewall-Regeln zurücksetzen",
-            async (_, _) => await RemoveFirewallAsync()));
+            RemoveFirewallAsync));
 
-        firewallButtons.Controls.Add(MakeButton(
+        firewallButtons.Controls.Add(MakeActionButton(
             "Firewallstatus aktualisieren",
-            async (_, _) => await RefreshSystemManagementAsync()));
+            RefreshSystemManagementAsync));
 
         panel.Controls.Add(firewallButtons);
 
@@ -727,26 +763,123 @@ public sealed class MainForm : Form
         _jobs.Columns.Add("message", "Meldung");
     }
 
+    /// <summary>
+    /// Führt eine Benutzeraktion exklusiv aus: Der Live-Timer greift währenddessen
+    /// nicht in _config ein, und alle Aktionsbuttons sind gesperrt.
+    /// </summary>
+    private async Task RunExclusiveAsync(Func<Task> action)
+    {
+        if (_operationRunning)
+        {
+            _operationStatus.Text = "Es läuft bereits eine Aktion. Bitte kurz warten …";
+            return;
+        }
+
+        _operationRunning = true;
+        SetActionButtonsEnabled(false);
+
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            _operationRunning = false;
+            SetActionButtonsEnabled(true);
+        }
+    }
+
+    private Button MakeActionButton(string text, Func<Task> action)
+    {
+        var button = MakeButton(
+            text,
+            async (_, _) => await RunExclusiveAsync(action));
+
+        _actionButtons.Add(button);
+        return button;
+    }
+
+    private void SetActionButtonsEnabled(bool enabled)
+    {
+        foreach (var button in _actionButtons)
+            button.Enabled = enabled;
+    }
+
+    private Task RefreshRequestedAsync()
+    {
+        if (_operationRunning)
+        {
+            _operationStatus.Text =
+                "Es läuft gerade eine Aktion. Die Ansicht wird danach automatisch aktualisiert.";
+            return Task.CompletedTask;
+        }
+
+        return RefreshAllAsync(true);
+    }
+
+    private static DateTime GetWriteUtc(string path)
+    {
+        try
+        {
+            return File.Exists(path)
+                ? File.GetLastWriteTimeUtc(path)
+                : DateTime.MinValue;
+        }
+        catch
+        {
+            return DateTime.MinValue;
+        }
+    }
+
+    private bool ReloadConfig(bool force)
+    {
+        var write = GetWriteUtc(AppPaths.DeviceConfig);
+
+        if (!force &&
+            write != DateTime.MinValue &&
+            write == _configWriteUtc)
+        {
+            return false;
+        }
+
+        _config = UnifiedConfigStore.LoadOrMigrate();
+        _configWriteUtc = GetWriteUtc(AppPaths.DeviceConfig);
+        return true;
+    }
+
+    private void SaveConfig()
+    {
+        UnifiedConfigStore.Save(_config);
+        _configWriteUtc = GetWriteUtc(AppPaths.DeviceConfig);
+    }
+
     private async Task RefreshAllAsync(bool refreshNetworkPrinters)
     {
+        if (_refreshRunning)
+            return;
+
+        _refreshRunning = true;
+
         try
         {
             SetBusy("SimplePrint wird aktualisiert …");
 
-            _config = UnifiedConfigStore.LoadOrMigrate();
-            LoadActivePeers();
+            ReloadConfig(true);
+            LoadActivePeers(true);
             RefreshHeader();
             RefreshOverview();
-            RefreshRelationshipGrids();
+            RefreshRelationshipGrids(true);
             RefreshJobsGrid();
-            RefreshDiagnosticsTree();
+            RefreshDiagnosticsTree(true);
             RefreshSettings();
 
             if (refreshNetworkPrinters)
                 RefreshNetworkPrinterTree();
 
-            await RefreshOwnPrintersAsync(false);
-            await RefreshSystemManagementAsync();
+            // Die langsamen Windows-Abfragen laufen parallel statt nacheinander.
+            await Task.WhenAll(
+                RefreshOwnPrintersAsync(false),
+                RefreshSystemManagementAsync());
 
             SetStatus("✓ Aktualisiert");
         }
@@ -761,34 +894,50 @@ public sealed class MainForm : Form
         }
         finally
         {
+            _refreshRunning = false;
             SetIdle();
         }
     }
 
-    private void RefreshLiveState()
+    private void RefreshLiveState(bool forceUi = false)
     {
+        // Während einer Benutzeraktion oder Komplettaktualisierung darf die
+        // periodische Aktualisierung _config und die Ansichten nicht anfassen.
+        if (_operationRunning || _refreshRunning)
+            return;
+
         try
         {
-            _config = UnifiedConfigStore.LoadOrMigrate();
+            var configChanged = ReloadConfig(false);
             LoadActivePeers();
 
-            var networkFingerprint = BuildNetworkCatalogFingerprint();
-            var networkChanged =
-                !string.Equals(
-                    networkFingerprint,
-                    _networkCatalogFingerprint,
-                    StringComparison.Ordinal);
+            _serviceStatus.Text = ServiceStatusReader.GetStatusText("SimplePrint");
+            _settingsServiceStatus.Text = _serviceStatus.Text;
+
+            if (configChanged)
+                RefreshSettings();
 
             RefreshHeader();
             RefreshOverview();
-            RefreshRelationshipGrids();
-            RefreshDiagnosticsTree();
 
-            if (networkChanged)
+            // Im Infobereich (Fenster verborgen) genügt der Status; die
+            // aufwendigen Tabellen werden erst beim Einblenden aktualisiert.
+            if (!Visible)
+                return;
+
+            RefreshRelationshipGrids(forceUi);
+            RefreshDiagnosticsTree(forceUi);
+
+            var networkChanged =
+                !string.Equals(
+                    BuildNetworkCatalogFingerprint(),
+                    _networkCatalogFingerprint,
+                    StringComparison.Ordinal);
+
+            if (forceUi || networkChanged)
                 RefreshNetworkPrinterTree();
 
-            if (Visible)
-                RefreshJobsGrid();
+            RefreshJobsGrid(forceUi);
         }
         catch
         {
@@ -796,14 +945,20 @@ public sealed class MainForm : Form
         }
     }
 
-    private void LoadActivePeers()
+    private void LoadActivePeers(bool force = false)
     {
-        var all = JsonStore.LoadOrCreate(
-            AppPaths.DevicePeers,
-            () => new List<DevicePresence>());
+        var write = GetWriteUtc(AppPaths.DevicePeers);
+
+        if (force || write != _peersWriteUtc)
+        {
+            _peerCache = JsonStore.LoadOrCreate(
+                AppPaths.DevicePeers,
+                () => new List<DevicePresence>());
+            _peersWriteUtc = write;
+        }
 
         var cutoff = DateTimeOffset.Now - TimeSpan.FromSeconds(35);
-        _peers = all
+        _peers = _peerCache
             .Where(x => x.DeviceId != Guid.Empty && x.LastSeen >= cutoff)
             .GroupBy(x => x.DeviceId)
             .Select(x => x.OrderByDescending(y => y.LastSeen).First())
@@ -849,12 +1004,18 @@ public sealed class MainForm : Form
             ? "Green"
             : "Yellow";
 
-        var next = Branding.CreateStatusIcon(level);
-        if (next is not null)
+        // Das Infobereich-Symbol wird nur noch bei einem Statuswechsel neu erzeugt
+        // (früher alle 5 Sekunden, mit jeweils neuem GDI-Icon).
+        if (!string.Equals(level, _trayLevel, StringComparison.Ordinal))
         {
-            var previous = _tray.Icon;
-            _tray.Icon = next;
-            previous?.Dispose();
+            var next = Branding.CreateStatusIcon(level);
+            if (next is not null)
+            {
+                var previous = _tray.Icon;
+                _tray.Icon = next;
+                previous?.Dispose();
+                _trayLevel = level;
+            }
         }
 
         _tray.Text = level == "Green"
@@ -914,24 +1075,32 @@ public sealed class MainForm : Form
                 .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
 
-            _ownPrinters.Rows.Clear();
-
-            foreach (var printer in printers)
+            _ownPrinters.SuspendLayout();
+            try
             {
-                var shared = _config.SharedPrinters.Any(x =>
-                    x.Enabled &&
-                    x.QueueName.Equals(
+                _ownPrinters.Rows.Clear();
+
+                foreach (var printer in printers)
+                {
+                    var shared = _config.SharedPrinters.Any(x =>
+                        x.Enabled &&
+                        x.QueueName.Equals(
+                            printer.Name,
+                            StringComparison.OrdinalIgnoreCase));
+
+                    var row = _ownPrinters.Rows.Add(
+                        shared,
                         printer.Name,
-                        StringComparison.OrdinalIgnoreCase));
+                        printer.DriverName,
+                        printer.PortName,
+                        printer.PrinterStatus);
 
-                var row = _ownPrinters.Rows.Add(
-                    shared,
-                    printer.Name,
-                    printer.DriverName,
-                    printer.PortName,
-                    printer.PrinterStatus);
-
-                _ownPrinters.Rows[row].Tag = printer;
+                    _ownPrinters.Rows[row].Tag = printer;
+                }
+            }
+            finally
+            {
+                _ownPrinters.ResumeLayout();
             }
 
             if (showBusy)
@@ -1014,9 +1183,8 @@ public sealed class MainForm : Form
             }
 
             _config.SharedPrinters = next;
-            UnifiedConfigStore.Save(_config);
+            SaveConfig();
 
-            await Task.Delay(1400);
             await RefreshAllAsync(false);
 
             SetStatus($"✓ {next.Count} Druckerfreigabe(n) gespeichert");
@@ -1095,7 +1263,7 @@ public sealed class MainForm : Form
                 SetBusy($"'{mapping.PrinterDisplayName}' wird entfernt …");
                 await PrinterInstaller.RemoveAsync(mapping);
                 _config.NetworkPrinters.Remove(mapping);
-                UnifiedConfigStore.Save(_config);
+                SaveConfig();
             }
 
             foreach (var tag in desired.Values)
@@ -1157,14 +1325,13 @@ public sealed class MainForm : Form
                     SetBusy($"Druckpfad für '{tag.Printer.DisplayName}' wird aktualisiert …");
                     await PrinterInstaller.RemoveAsync(current);
                     _config.NetworkPrinters.Remove(current);
-                    UnifiedConfigStore.Save(_config);
+                    SaveConfig();
                 }
 
                 await InstallNetworkPrinterAsync(tag);
             }
 
-            UnifiedConfigStore.Save(_config);
-            await Task.Delay(1400);
+            SaveConfig();
             await RefreshAllAsync(true);
 
             SetStatus("✓ Netzwerkdruckerauswahl wurde übernommen");
@@ -1330,7 +1497,7 @@ public sealed class MainForm : Form
         };
 
         _config.NetworkPrinters.Add(mapping);
-        UnifiedConfigStore.Save(_config);
+        SaveConfig();
 
         try
         {
@@ -1387,7 +1554,7 @@ public sealed class MainForm : Form
                 mapping.PortName = sharePath;
                 mapping.LocalProxyPort = 0;
                 mapping.UseExistingQueue = false;
-                UnifiedConfigStore.Save(_config);
+                SaveConfig();
 
                 try
                 {
@@ -1411,7 +1578,7 @@ public sealed class MainForm : Form
         catch
         {
             _config.NetworkPrinters.Remove(mapping);
-            UnifiedConfigStore.Save(_config);
+            SaveConfig();
             throw;
         }
     }
@@ -1787,7 +1954,12 @@ public sealed class MainForm : Form
         return string.Join("\n", lines);
     }
 
-    private void RefreshRelationshipGrids()
+    /// <summary>
+    /// Baut die Server-/Client-Tabellen nur neu auf, wenn sich der Inhalt
+    /// geändert hat. Ansonsten wird lediglich die Spalte "Zuletzt gesehen"
+    /// aktualisiert (kein Flackern, keine verlorene Markierung).
+    /// </summary>
+    private void RefreshRelationshipGrids(bool force = false)
     {
         var serverIds = _config.NetworkPrinters
             .Where(x => x.Enabled)
@@ -1796,42 +1968,113 @@ public sealed class MainForm : Form
             .Distinct()
             .ToHashSet();
 
-        _servers.Rows.Clear();
-        foreach (var peer in _peers.Where(x => serverIds.Contains(x.DeviceId)))
-        {
-            var printerNames = _config.NetworkPrinters
-                .Where(x => x.Enabled && x.SourceDeviceId == peer.DeviceId)
-                .Select(x => x.PrinterDisplayName)
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.CurrentCultureIgnoreCase);
+        var serverRows = _peers
+            .Where(x => serverIds.Contains(x.DeviceId))
+            .Select(peer => new
+            {
+                Peer = peer,
+                Printers = string.Join(
+                    ", ",
+                    _config.NetworkPrinters
+                        .Where(x => x.Enabled && x.SourceDeviceId == peer.DeviceId)
+                        .Select(x => x.PrinterDisplayName)
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.CurrentCultureIgnoreCase))
+            })
+            .ToList();
 
-            _servers.Rows.Add(
-                peer.DeviceName,
-                peer.Address,
-                peer.AppVersion,
-                string.Join(", ", printerNames),
-                FormatSeen(peer.LastSeen));
+        var clientRows = _peers
+            .Where(x => x.Subscriptions.Any(s => s.SourceDeviceId == _config.DeviceId))
+            .Select(peer =>
+            {
+                var usedIds = peer.Subscriptions
+                    .Where(x => x.SourceDeviceId == _config.DeviceId)
+                    .Select(x => x.PrinterId)
+                    .ToHashSet();
+
+                var printerNames = _config.SharedPrinters
+                    .Where(x => usedIds.Contains(x.Id))
+                    .Select(x => string.IsNullOrWhiteSpace(x.DisplayName)
+                        ? x.QueueName
+                        : x.DisplayName);
+
+                return new { Peer = peer, Printers = string.Join(", ", printerNames) };
+            })
+            .ToList();
+
+        var fingerprint = string.Join(
+            "\n",
+            serverRows
+                .Select(x =>
+                    $"S|{x.Peer.DeviceId:N}|{x.Peer.DeviceName}|{x.Peer.Address}|{x.Peer.AppVersion}|{x.Printers}")
+                .Concat(clientRows.Select(x =>
+                    $"C|{x.Peer.DeviceId:N}|{x.Peer.DeviceName}|{x.Peer.Address}|{x.Peer.AppVersion}|{x.Printers}")));
+
+        if (!force &&
+            string.Equals(fingerprint, _relationshipFingerprint, StringComparison.Ordinal))
+        {
+            UpdateSeenColumn(_servers, serverRows.Select(x => x.Peer));
+            UpdateSeenColumn(_clients, clientRows.Select(x => x.Peer));
+            return;
         }
 
-        _clients.Rows.Clear();
-        foreach (var peer in _peers.Where(x =>
-                     x.Subscriptions.Any(s => s.SourceDeviceId == _config.DeviceId)))
+        _relationshipFingerprint = fingerprint;
+
+        _servers.SuspendLayout();
+        try
         {
-            var usedIds = peer.Subscriptions
-                .Where(x => x.SourceDeviceId == _config.DeviceId)
-                .Select(x => x.PrinterId)
-                .ToHashSet();
+            _servers.Rows.Clear();
+            foreach (var item in serverRows)
+            {
+                var index = _servers.Rows.Add(
+                    item.Peer.DeviceName,
+                    item.Peer.Address,
+                    item.Peer.AppVersion,
+                    item.Printers,
+                    FormatSeen(item.Peer.LastSeen));
 
-            var printerNames = _config.SharedPrinters
-                .Where(x => usedIds.Contains(x.Id))
-                .Select(x => string.IsNullOrWhiteSpace(x.DisplayName) ? x.QueueName : x.DisplayName);
+                _servers.Rows[index].Tag = item.Peer.DeviceId;
+            }
+        }
+        finally
+        {
+            _servers.ResumeLayout();
+        }
 
-            _clients.Rows.Add(
-                peer.DeviceName,
-                peer.Address,
-                peer.AppVersion,
-                string.Join(", ", printerNames),
-                FormatSeen(peer.LastSeen));
+        _clients.SuspendLayout();
+        try
+        {
+            _clients.Rows.Clear();
+            foreach (var item in clientRows)
+            {
+                var index = _clients.Rows.Add(
+                    item.Peer.DeviceName,
+                    item.Peer.Address,
+                    item.Peer.AppVersion,
+                    item.Printers,
+                    FormatSeen(item.Peer.LastSeen));
+
+                _clients.Rows[index].Tag = item.Peer.DeviceId;
+            }
+        }
+        finally
+        {
+            _clients.ResumeLayout();
+        }
+    }
+
+    private static void UpdateSeenColumn(
+        DataGridView grid,
+        IEnumerable<DevicePresence> peers)
+    {
+        var byId = peers
+            .GroupBy(x => x.DeviceId)
+            .ToDictionary(x => x.Key, x => x.First());
+
+        foreach (DataGridViewRow row in grid.Rows)
+        {
+            if (row.Tag is Guid id && byId.TryGetValue(id, out var peer))
+                row.Cells["seen"].Value = FormatSeen(peer.LastSeen);
         }
     }
 
@@ -1990,8 +2233,14 @@ public sealed class MainForm : Form
         SetStatus("✓ Druckauftragshistorie gelöscht");
     }
 
-    private void RefreshJobsGrid()
+    private void RefreshJobsGrid(bool force = true)
     {
+        var write = GetWriteUtc(AppPaths.DeviceJobs);
+
+        // Die Tabelle wird nur neu aufgebaut, wenn sich jobs.json geändert hat.
+        if (!force && write == _jobsWriteUtc)
+            return;
+
         List<PrintJobRecord> jobs;
         try
         {
@@ -2004,28 +2253,97 @@ public sealed class MainForm : Form
             jobs = [];
         }
 
-        _jobs.Rows.Clear();
+        _jobsWriteUtc = write;
 
-        foreach (var job in jobs
-                     .OrderByDescending(x => x.UpdatedAt)
-                     .Take(200))
+        var selectedIndex = _jobs.SelectedRows.Count > 0
+            ? _jobs.SelectedRows[0].Index
+            : -1;
+
+        var firstVisible = -1;
+        try
         {
-            var incoming = job.ServerId == _config.DeviceId;
-            var peer = incoming ? job.ClientName : job.ServerName;
+            firstVisible = _jobs.FirstDisplayedScrollingRowIndex;
+        }
+        catch
+        {
+        }
 
-            _jobs.Rows.Add(
-                job.UpdatedAt.LocalDateTime.ToString("dd.MM.yyyy HH:mm:ss"),
-                incoming ? "Eingehend" : "Ausgehend",
-                peer,
-                job.PrinterName,
-                job.Status,
-                job.Bytes.ToString("N0"),
-                job.Message);
+        _jobs.SuspendLayout();
+        try
+        {
+            _jobs.Rows.Clear();
+
+            foreach (var job in jobs
+                         .OrderByDescending(x => x.UpdatedAt)
+                         .Take(200))
+            {
+                var incoming = job.ServerId == _config.DeviceId;
+                var peer = incoming ? job.ClientName : job.ServerName;
+
+                _jobs.Rows.Add(
+                    job.UpdatedAt.LocalDateTime.ToString("dd.MM.yyyy HH:mm:ss"),
+                    incoming ? "Eingehend" : "Ausgehend",
+                    peer,
+                    job.PrinterName,
+                    job.Status,
+                    job.Bytes.ToString("N0"),
+                    job.Message);
+            }
+
+            if (selectedIndex >= 0 && selectedIndex < _jobs.Rows.Count)
+                _jobs.Rows[selectedIndex].Selected = true;
+
+            if (firstVisible >= 0 && firstVisible < _jobs.Rows.Count)
+            {
+                try
+                {
+                    _jobs.FirstDisplayedScrollingRowIndex = firstVisible;
+                }
+                catch
+                {
+                }
+            }
+        }
+        finally
+        {
+            _jobs.ResumeLayout();
         }
     }
 
-    private void RefreshDiagnosticsTree()
+    private void RefreshDiagnosticsTree(bool force = false)
     {
+        var serverIds = _config.NetworkPrinters
+            .Where(x => x.Enabled)
+            .Select(x => x.SourceDeviceId)
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .ToHashSet();
+
+        var serverPeers = _peers
+            .Where(x => serverIds.Contains(x.DeviceId))
+            .ToList();
+
+        var clientPeers = _peers
+            .Where(x => x.Subscriptions.Any(s => s.SourceDeviceId == _config.DeviceId))
+            .ToList();
+
+        var fingerprint = string.Join(
+            "\n",
+            new[] { $"L|{_config.DeviceName}" }
+                .Concat(serverPeers.Select(x =>
+                    $"S|{x.DeviceId:N}|{x.DeviceName}|{x.Address}|{x.DiagnosticsPort}|{x.ProtocolVersion}"))
+                .Concat(clientPeers.Select(x =>
+                    $"C|{x.DeviceId:N}|{x.DeviceName}|{x.Address}|{x.DiagnosticsPort}|{x.ProtocolVersion}")));
+
+        if (!force &&
+            _diagnostics.Nodes.Count > 0 &&
+            string.Equals(fingerprint, _diagnosticsFingerprint, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _diagnosticsFingerprint = fingerprint;
+
         _diagnostics.BeginUpdate();
         try
         {
@@ -2050,14 +2368,8 @@ public sealed class MainForm : Form
             {
                 Tag = "group:servers"
             };
-            var serverIds = _config.NetworkPrinters
-                .Where(x => x.Enabled)
-                .Select(x => x.SourceDeviceId)
-                .Where(x => x != Guid.Empty)
-                .Distinct()
-                .ToHashSet();
 
-            foreach (var peer in _peers.Where(x => serverIds.Contains(x.DeviceId)))
+            foreach (var peer in serverPeers)
             {
                 serverRoot.Nodes.Add(new TreeNode(
                     $"{peer.DeviceName} · {peer.Address}")
@@ -2071,8 +2383,8 @@ public sealed class MainForm : Form
             {
                 Tag = "group:clients"
             };
-            foreach (var peer in _peers.Where(x =>
-                         x.Subscriptions.Any(s => s.SourceDeviceId == _config.DeviceId)))
+
+            foreach (var peer in clientPeers)
             {
                 clientRoot.Nodes.Add(new TreeNode(
                     $"{peer.DeviceName} · {peer.Address}")
@@ -2425,35 +2737,27 @@ public sealed class MainForm : Form
             label.Text = text;
     }
 
-    private async Task RefreshSystemManagementAsync()
+    private static async Task<NetworkProfileState?> ReadNetworkStateAsync()
     {
-        const string serviceScript = """
-$service = Get-Service -Name 'SimplePrint' -ErrorAction SilentlyContinue
-if($null -eq $service) { 'Nicht installiert' } else { [string]$service.Status }
-""";
+        try
+        {
+            return await NetworkProfileHelper.GetStateAsync();
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
-        var serviceResult = await PowerShellRunner.RunAsync(serviceScript);
-        var serviceState = serviceResult.StdOut.Trim();
-
-        _serviceStatus.Text = serviceState.Equals(
-                "Running",
-                StringComparison.OrdinalIgnoreCase)
-            ? "Läuft"
-            : string.IsNullOrWhiteSpace(serviceState)
-                ? "Unbekannt"
-                : serviceState;
-
-        _settingsServiceStatus.Text = _serviceStatus.Text;
-
-        var network = await NetworkProfileHelper.GetStateAsync();
-        _settingsNetworkStatus.Text = network.HasPublicProfile
-            ? "Öffentlich · SimplePrint-Netzwerkzugriff blockiert"
-            : "Privat/Domäne · bereit";
+    private async Task<string> ReadFirewallSummaryAsync()
+    {
+        var config = _config;
 
         try
         {
-            var firewall = await UnifiedSystemManager.GetFirewallStateAsync(_config);
-            _settingsFirewallStatus.Text = firewall.Correct
+            var firewall = await UnifiedSystemManager.GetFirewallStateAsync(config);
+
+            return firewall.Correct
                 ? "OK · Discovery, Gateway und Diagnose freigegeben"
                 : "Unvollständig · " +
                   string.Join(
@@ -2467,14 +2771,37 @@ if($null -eq $service) { 'Nicht installiert' } else { [string]$service.Status }
         }
         catch (Exception ex)
         {
-            _settingsFirewallStatus.Text =
-                "Status konnte nicht gelesen werden · " + ex.Message;
+            return "Status konnte nicht gelesen werden · " + ex.Message;
         }
+    }
+
+    private async Task RefreshSystemManagementAsync()
+    {
+        // Der Dienststatus kommt direkt aus der Windows-Dienststeuerung
+        // (kein PowerShell-Prozess mehr); Netzwerkprofil und Firewall werden
+        // parallel abgefragt.
+        _serviceStatus.Text = ServiceStatusReader.GetStatusText("SimplePrint");
+        _settingsServiceStatus.Text = _serviceStatus.Text;
+
+        var networkTask = ReadNetworkStateAsync();
+        var firewallTask = ReadFirewallSummaryAsync();
+
+        await Task.WhenAll(networkTask, firewallTask);
+
+        var network = networkTask.Result;
+
+        _settingsNetworkStatus.Text = network is null
+            ? "Status konnte nicht gelesen werden"
+            : network.HasPublicProfile
+                ? "Öffentlich · SimplePrint-Netzwerkzugriff blockiert"
+                : "Privat/Domäne · bereit";
+
+        _settingsFirewallStatus.Text = firewallTask.Result;
 
         RefreshStartupState();
         RefreshOverview();
 
-        if (network.HasPublicProfile)
+        if (network is { HasPublicProfile: true })
             SetStatus("⚠ Öffentliches Netzwerk: SimplePrint ist im Netzwerk eingeschränkt.");
     }
 
@@ -2753,17 +3080,38 @@ if($null -eq $service) { 'Nicht installiert' } else { [string]$service.Status }
         return $"vor {(int)age.TotalMinutes} min";
     }
 
-    private static DataGridView Grid() => new()
+    private static void EnableDoubleBuffering(Control control)
     {
-        Dock = DockStyle.Fill,
-        ReadOnly = true,
-        AllowUserToAddRows = false,
-        AllowUserToDeleteRows = false,
-        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-        SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-        MultiSelect = false,
-        RowHeadersVisible = false
-    };
+        try
+        {
+            typeof(Control)
+                .GetProperty(
+                    "DoubleBuffered",
+                    BindingFlags.Instance | BindingFlags.NonPublic)?
+                .SetValue(control, true);
+        }
+        catch
+        {
+        }
+    }
+
+    private static DataGridView Grid()
+    {
+        var grid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false,
+            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false,
+            RowHeadersVisible = false
+        };
+
+        EnableDoubleBuffering(grid);
+        return grid;
+    }
 
     private static FlowLayoutPanel BottomButtons() => new()
     {
@@ -2838,6 +3186,10 @@ if($null -eq $service) { 'Nicht installiert' } else { [string]$service.Status }
         Show();
         WindowState = FormWindowState.Normal;
         Activate();
+
+        // Beim Einblenden aus dem Infobereich alle Ansichten auffrischen,
+        // weil sie im verborgenen Zustand nicht mitgeführt wurden.
+        RefreshLiveState(true);
     }
 
     private void HideToTray()
