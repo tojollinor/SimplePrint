@@ -374,6 +374,12 @@ public sealed class MainForm : Form
         ownButtons.Controls.Add(MakeButton(
             "Freigaben speichern",
             async (_, _) => await SaveOwnPrinterSelectionAsync()));
+        ownButtons.Controls.Add(MakeButton(
+            "Warteschlange öffnen",
+            (_, _) => OpenSelectedOwnPrinterQueue()));
+        ownButtons.Controls.Add(MakeButton(
+            "Testseite",
+            (_, _) => PrintSelectedOwnPrinterTestPage()));
 
         own.Controls.Add(_ownPrinters);
         own.Controls.Add(ownInfo);
@@ -395,6 +401,12 @@ public sealed class MainForm : Form
         networkButtons.Controls.Add(MakeButton(
             "Druckerauswahl speichern",
             async (_, _) => await SaveNetworkPrinterSelectionAsync()));
+        networkButtons.Controls.Add(MakeButton(
+            "Warteschlange öffnen",
+            (_, _) => OpenSelectedNetworkPrinterQueue()));
+        networkButtons.Controls.Add(MakeButton(
+            "Testseite",
+            (_, _) => PrintSelectedNetworkPrinterTestPage()));
 
         network.Controls.Add(_networkPrinters);
         network.Controls.Add(networkInfo);
@@ -452,6 +464,12 @@ public sealed class MainForm : Form
 
         var buttons = BottomButtons();
         buttons.Controls.Add(MakeButton("Aktualisieren", (_, _) => RefreshJobsGrid()));
+        buttons.Controls.Add(MakeButton(
+            "Abgeschlossene löschen",
+            (_, _) => ClearCompletedJobs()));
+        buttons.Controls.Add(MakeButton(
+            "Alle löschen",
+            (_, _) => ClearAllJobs()));
 
         tab.Controls.Add(_jobs);
         tab.Controls.Add(info);
