@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using SimplePrint.Common;
 
@@ -129,6 +130,32 @@ ConvertTo-Json -InputObject $items -Compress
 
         return printers;
     }
+
+    public static void OpenQueue(string printerName)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "rundll32.exe",
+            Arguments =
+                $"printui.dll,PrintUIEntry /o /n {QuoteArgument(printerName)}",
+            UseShellExecute = true
+        });
+    }
+
+    public static void PrintTestPage(string printerName)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "rundll32.exe",
+            Arguments =
+                $"printui.dll,PrintUIEntry /k /n {QuoteArgument(printerName)}",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+    }
+
+    private static string QuoteArgument(string value) =>
+        """ + value.Replace(""", "\\"") + """;
 
     public static bool IsUnsafeSimplePrintLoop(LocalPrinterInfo printer) =>
         (!string.IsNullOrWhiteSpace(printer.Comment) &&
