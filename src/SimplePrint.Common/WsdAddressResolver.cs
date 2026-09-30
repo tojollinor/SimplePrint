@@ -11,6 +11,8 @@ public static class WsdAddressResolver
         if (string.IsNullOrWhiteSpace(deviceUuid))
             return "";
 
+        // Hinweis: $host ist in PowerShell eine schreibgeschützte Systemvariable.
+        // Deshalb heißt die Variable hier $resolvedHost.
         var script = $@"
 $ErrorActionPreference='SilentlyContinue'
 $raw={PowerShellRunner.Quote(deviceUuid)}
@@ -57,9 +59,9 @@ foreach($candidate in $candidates) {{
   $key = Join-Path $root $candidate
   if(Test-Path -LiteralPath $key) {{
     $item = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
-    $host = Get-HostFromLocation ([string]$item.LocationInformation)
-    if(-not [string]::IsNullOrWhiteSpace($host)) {{
-      $host
+    $resolvedHost = Get-HostFromLocation ([string]$item.LocationInformation)
+    if(-not [string]::IsNullOrWhiteSpace($resolvedHost)) {{
+      $resolvedHost
       exit 0
     }}
   }}
@@ -71,9 +73,9 @@ if(Test-Path -LiteralPath $root) {{
     if((Normalize-WsdUuid $name) -ne $normalized) {{ continue }}
 
     $item = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue
-    $host = Get-HostFromLocation ([string]$item.LocationInformation)
-    if(-not [string]::IsNullOrWhiteSpace($host)) {{
-      $host
+    $resolvedHost = Get-HostFromLocation ([string]$item.LocationInformation)
+    if(-not [string]::IsNullOrWhiteSpace($resolvedHost)) {{
+      $resolvedHost
       exit 0
     }}
   }}
@@ -111,7 +113,9 @@ if($hex.Length -ge 12) {{
 }}
 ";
 
-        var result = await PowerShellRunner.RunAsync(script);
+        var result = await PowerShellRunner.RunAsync(
+            script,
+            timeout: TimeSpan.FromSeconds(30));
 
         if (result.ExitCode != 0)
             return "";
