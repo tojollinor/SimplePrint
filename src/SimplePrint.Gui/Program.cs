@@ -67,6 +67,11 @@ internal static class Program
             _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
 
             WindowsAppIdentity.Set("SimplePrint.Unified");
+
+            // Fragt am Server, ob ein Client einen Druckertreiber erhalten darf.
+            using var driverRequests = new DriverRequestWatcher();
+            driverRequests.Start();
+
             Application.Run(new MainForm());
         }
         finally

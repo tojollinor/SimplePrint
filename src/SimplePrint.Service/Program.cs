@@ -14,6 +14,7 @@ internal static class Program
         builder.Services.AddWindowsService(options =>
             options.ServiceName = "SimplePrint");
         builder.Services.AddHostedService<DeviceWorker>();
+        builder.Services.AddHostedService<DriverTransferWorker>();
 
         builder.Build().Run();
     }
