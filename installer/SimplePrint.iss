@@ -55,7 +55,6 @@ Name: "{commondesktop}\SimplePrint"; Filename: "{app}\Unified\Gui\SimplePrint.ex
 Name: "desktopicon"; Description: "Desktop-Verknüpfung erstellen"; GroupDescription: "Zusätzliche Symbole:"; Flags: unchecked
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\Install-Unified.ps1"" -AppPath ""{app}"""; Flags: runhidden waituntilterminated
 Filename: "{app}\Unified\Gui\SimplePrint.exe"; Description: "SimplePrint öffnen"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
@@ -70,6 +69,38 @@ begin
   Sleep(500);
 end;
 
+procedure RunUnifiedSetup();
+var
+  ResultCode: Integer;
+  Params: String;
+begin
+  Params :=
+    '-NoProfile -ExecutionPolicy Bypass -File "' +
+    ExpandConstant('{tmp}\Install-Unified.ps1') +
+    '" -AppPath "' +
+    ExpandConstant('{app}') +
+    '"';
+
+  if not Exec(
+      ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Params,
+      '',
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ResultCode) then
+  begin
+    RaiseException('Die SimplePrint-Systemeinrichtung konnte nicht gestartet werden.');
+  end;
+
+  if ResultCode <> 0 then
+  begin
+    RaiseException(
+      'Die SimplePrint-Systemeinrichtung wurde mit Fehlercode ' +
+      IntToStr(ResultCode) +
+      ' beendet. Die Installation wird nicht als erfolgreich abgeschlossen.');
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
@@ -77,5 +108,9 @@ begin
     StopService('SimplePrint');
     StopService('SimplePrintServer');
     StopService('SimplePrintClient');
+  end
+  else if CurStep = ssPostInstall then
+  begin
+    RunUnifiedSetup();
   end;
 end;
