@@ -270,15 +270,40 @@ if($selected) {{ $selected | ConvertTo-Json -Compress }}
         if (installed.Any(x => x.Equals(driverName, StringComparison.OrdinalIgnoreCase)))
             return true;
 
-        var script = $@"
+        string? localError = null;
+
+        try
+        {
+            var script = $@"
 $driver={PowerShellRunner.Quote(driverName)}
 Add-PrinterDriver -Name $driver -ErrorAction Stop
 ";
 
-        await RunWithElevationIfRequiredAsync(script);
+            await RunWithElevationIfRequiredAsync(script);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            localError = ex.Message;
+        }
 
         installed = await GetDriverNamesAsync();
-        return installed.Any(x => x.Equals(driverName, StringComparison.OrdinalIgnoreCase));
+        if (installed.Any(x => x.Equals(driverName, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        // Der Treiber steckt nicht im Windows-Treiberspeicher dieses PCs. Wenn ein
+        // SimplePrint-Server ihn verwendet, kann er ihn einmalig bereitstellen
+        // (mit Bestätigung am Server, Architektur- und Signaturprüfung).
+        if (await DriverPackageInstaller.TryInstallFromServerAsync(driverName))
+            return true;
+
+        if (localError is not null)
+            throw new InvalidOperationException(localError);
+
+        return false;
     }
 
     private static async Task InstallWindowsShareAsync(NetworkPrinterMapping mapping)
