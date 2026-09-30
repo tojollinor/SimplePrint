@@ -34,7 +34,9 @@ internal static class PrinterInstaller
 
         var elevationLikelyRequired =
             detail.Contains("0x80070005", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("0x800702e4", StringComparison.OrdinalIgnoreCase) ||
             detail.Contains("Zugriff verweigert", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("erhöhte Rechte", StringComparison.OrdinalIgnoreCase) ||
             detail.Contains("Access is denied", StringComparison.OrdinalIgnoreCase) ||
             detail.Contains("Administrator", StringComparison.OrdinalIgnoreCase) ||
             detail.Contains("elevation", StringComparison.OrdinalIgnoreCase) ||
