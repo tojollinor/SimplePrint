@@ -745,7 +745,7 @@ public sealed class MainForm : Form
                 RefreshNetworkPrinterTree();
 
             await RefreshOwnPrintersAsync(false);
-            await RefreshServiceStatusAsync();
+            await RefreshSystemManagementAsync();
 
             SetStatus("✓ Aktualisiert");
         }
@@ -807,8 +807,8 @@ public sealed class MainForm : Form
 
         var version = typeof(MainForm).Assembly.GetName().Version;
         _version.Text = version is null
-            ? "unbekannt"
-            : $"{version.Major}.{version.Minor}.{version.Build}";
+            ? $"unbekannt · P{Protocol.Version}"
+            : $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)} · P{Protocol.Version}";
     }
 
     private void RefreshOverview()
@@ -2343,23 +2343,319 @@ public sealed class MainForm : Form
             label.Text = text;
     }
 
-    private async Task RefreshServiceStatusAsync()
+    private async Task RefreshSystemManagementAsync()
     {
-        const string script = """
+        const string serviceScript = """
 $service = Get-Service -Name 'SimplePrint' -ErrorAction SilentlyContinue
 if($null -eq $service) { 'Nicht installiert' } else { [string]$service.Status }
 """;
 
-        var result = await PowerShellRunner.RunAsync(script);
-        var status = result.StdOut.Trim();
+        var serviceResult = await PowerShellRunner.RunAsync(serviceScript);
+        var serviceState = serviceResult.StdOut.Trim();
 
-        _serviceStatus.Text = status.Equals("Running", StringComparison.OrdinalIgnoreCase)
+        _serviceStatus.Text = serviceState.Equals(
+                "Running",
+                StringComparison.OrdinalIgnoreCase)
             ? "Läuft"
-            : string.IsNullOrWhiteSpace(status)
+            : string.IsNullOrWhiteSpace(serviceState)
                 ? "Unbekannt"
-                : status;
+                : serviceState;
 
+        _settingsServiceStatus.Text = _serviceStatus.Text;
+
+        var network = await NetworkProfileHelper.GetStateAsync();
+        _settingsNetworkStatus.Text = network.HasPublicProfile
+            ? "Öffentlich · SimplePrint-Netzwerkzugriff blockiert"
+            : "Privat/Domäne · bereit";
+
+        try
+        {
+            var firewall = await UnifiedSystemManager.GetFirewallStateAsync(_config);
+            _settingsFirewallStatus.Text = firewall.Correct
+                ? "OK · Discovery, Gateway und Diagnose freigegeben"
+                : "Unvollständig · " +
+                  string.Join(
+                      ", ",
+                      new[]
+                      {
+                          firewall.Discovery.Correct ? null : "Discovery",
+                          firewall.Gateway.Correct ? null : "Gateway",
+                          firewall.Diagnostics.Correct ? null : "Diagnose"
+                      }.Where(x => x is not null));
+        }
+        catch (Exception ex)
+        {
+            _settingsFirewallStatus.Text =
+                "Status konnte nicht gelesen werden · " + ex.Message;
+        }
+
+        RefreshStartupState();
         RefreshOverview();
+
+        if (network.HasPublicProfile)
+            SetStatus("⚠ Öffentliches Netzwerk: SimplePrint ist im Netzwerk eingeschränkt.");
+    }
+
+    private void RefreshStartupState()
+    {
+        var enabled = StartupManager.IsSystemWideEnabled("SimplePrintGui");
+
+        _startupStatus.Text = enabled
+            ? "Status: GUI-Autostart aktiviert"
+            : "Status: GUI-Autostart deaktiviert";
+
+        _startupTray.Checked = enabled
+            ? StartupManager.IsTrayModeEnabled("SimplePrintGui", true)
+            : true;
+    }
+
+    private async Task SetStartupAsync(bool enabled)
+    {
+        try
+        {
+            SetBusy(
+                enabled
+                    ? "Autostart wird aktiviert …"
+                    : "Autostart wird deaktiviert …");
+
+            await StartupManager.SetSystemWideAsync(
+                "SimplePrintGui",
+                Application.ExecutablePath,
+                enabled,
+                _startupTray.Checked);
+
+            RefreshStartupState();
+
+            SetStatus(
+                enabled
+                    ? "✓ Autostart aktiviert"
+                    : "✓ Autostart deaktiviert");
+        }
+        catch (OperationCanceledException ex)
+        {
+            SetStatus("Autostart-Änderung abgebrochen");
+            MessageBox.Show(
+                ex.Message,
+                "Autostart",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Autostart konnte nicht geändert werden");
+            MessageBox.Show(
+                ex.Message,
+                "Autostart",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private async Task RestartServiceAsync()
+    {
+        try
+        {
+            SetBusy("SimplePrint-Dienst wird neu gestartet …");
+            await UnifiedSystemManager.RestartServiceAsync();
+            await Task.Delay(700);
+            await RefreshSystemManagementAsync();
+            SetStatus("✓ SimplePrint-Dienst läuft");
+        }
+        catch (OperationCanceledException ex)
+        {
+            SetStatus("Dienstneustart abgebrochen");
+            MessageBox.Show(
+                ex.Message,
+                "SimplePrint-Dienst",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ SimplePrint-Dienst konnte nicht neu gestartet werden");
+            MessageBox.Show(
+                ex.Message,
+                "SimplePrint-Dienst",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private async Task ApplyFirewallAsync()
+    {
+        try
+        {
+            SetBusy("Firewall-Regeln werden angewendet und geprüft …");
+
+            await UnifiedSystemManager.ApplyFirewallAsync(_config);
+
+            var state = await UnifiedSystemManager.GetFirewallStateAsync(_config);
+            if (!state.Correct)
+            {
+                throw new InvalidOperationException(
+                    "Windows hat nicht alle SimplePrint-Firewallregeln korrekt übernommen." +
+                    Environment.NewLine +
+                    $"Discovery: {state.Discovery.Detail}" +
+                    Environment.NewLine +
+                    $"Gateway: {state.Gateway.Detail}" +
+                    Environment.NewLine +
+                    $"Diagnose: {state.Diagnostics.Detail}");
+            }
+
+            await RefreshSystemManagementAsync();
+            SetStatus("✓ Firewall-Regeln angewendet und verifiziert");
+        }
+        catch (OperationCanceledException ex)
+        {
+            SetStatus("Firewall-Änderung abgebrochen");
+            MessageBox.Show(
+                ex.Message,
+                "Firewall",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Firewall-Regeln konnten nicht angewendet werden");
+            MessageBox.Show(
+                ex.Message,
+                "Firewall",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private async Task RemoveFirewallAsync()
+    {
+        if (MessageBox.Show(
+                "Die drei SimplePrint-Kernregeln für Discovery, Druck-Gateway und Diagnose entfernen?",
+                "Firewall zurücksetzen",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            SetBusy("Firewall-Regeln werden entfernt …");
+            await UnifiedSystemManager.RemoveFirewallAsync();
+            await RefreshSystemManagementAsync();
+            SetStatus("✓ Firewall-Kernregeln entfernt");
+        }
+        catch (OperationCanceledException ex)
+        {
+            SetStatus("Firewall-Änderung abgebrochen");
+            MessageBox.Show(
+                ex.Message,
+                "Firewall",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Firewall-Regeln konnten nicht entfernt werden");
+            MessageBox.Show(
+                ex.Message,
+                "Firewall",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (_updateCheckRunning)
+        {
+            if (manual)
+                SetStatus("Updateprüfung läuft bereits …");
+
+            return;
+        }
+
+        _updateCheckRunning = true;
+
+        try
+        {
+            if (manual)
+                SetBusy("GitHub Releases werden geprüft …");
+
+            var current =
+                typeof(MainForm).Assembly.GetName().Version
+                ?? new Version(0, 0, 0, 0);
+
+            var update = await GitHubUpdateService.CheckAsync(
+                current,
+                SimplePrintComponent.Unified);
+
+            if (update is null)
+            {
+                if (manual)
+                {
+                    SetStatus("✓ SimplePrint ist aktuell");
+                    MessageBox.Show(
+                        "Es ist kein neueres SimplePrint-Release verfügbar.",
+                        "SimplePrint Update",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+
+                return;
+            }
+
+            if (!manual &&
+                string.Equals(
+                    _lastOfferedUpdate,
+                    update.TagName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _lastOfferedUpdate = update.TagName;
+            SetStatus($"Update verfügbar: {update.TagName}");
+
+            using var dialog = new UpdateForm(update);
+            dialog.ShowDialog(Visible ? this : null);
+
+            if (dialog.InstallerStarted)
+                ExitApplication();
+        }
+        catch (Exception ex)
+        {
+            if (manual)
+            {
+                SetStatus("✗ Updateprüfung fehlgeschlagen");
+                MessageBox.Show(
+                    ex.Message,
+                    "SimplePrint Update",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+        finally
+        {
+            _updateCheckRunning = false;
+
+            if (manual && _operationProgress.Visible)
+                SetIdle();
+        }
     }
 
     private static string FormatSeen(DateTimeOffset value)
