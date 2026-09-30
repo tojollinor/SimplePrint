@@ -6,16 +6,19 @@ namespace SimplePrint.Common;
 
 public static class Protocol
 {
-    public const int Version = 5;
+    public const int Version = 6;
     public const int DefaultDiscoveryPort = 45880;
     public const int DefaultGatewayPort = 45881;
     public const int DefaultClientDiagnosticsPort = 45882;
+    public const int DefaultDiagnosticsPort = DefaultClientDiagnosticsPort;
     public const string DiscoveryRequestMagic = "SPRDISC1";
     public const string DiscoveryResponseMagic = "SPRANN1";
     public const string ClientHeartbeatMagic = "SPRCLT1";
+    public const string DeviceDiscoveryRequestMagic = "SPRDISC2";
+    public const string DeviceAnnouncementMagic = "SPRDEV2";
     public const int GatewayHeaderLength = 40;
 
-    private static readonly byte[] GatewayMagic = Encoding.ASCII.GetBytes("SPR5");
+    private static readonly byte[] GatewayMagic = Encoding.ASCII.GetBytes("SPR6");
     private static readonly byte[] DiagnosticsRequestMagic = Encoding.ASCII.GetBytes("SPD1");
     private static readonly byte[] DiagnosticsArchiveMagic = Encoding.ASCII.GetBytes("SPDZ");
     private static readonly byte[] DiagnosticsErrorMagic = Encoding.ASCII.GetBytes("SPDE");
@@ -24,6 +27,20 @@ public static class Protocol
     private const int DiagnosticsMaxPayload = 128 * 1024 * 1024;
 
     public static byte[] DiscoveryRequestBytes => Encoding.ASCII.GetBytes(DiscoveryRequestMagic);
+    public static byte[] DeviceDiscoveryRequestBytes => Encoding.ASCII.GetBytes(DeviceDiscoveryRequestMagic);
+
+    public static byte[] SerializeDeviceAnnouncement(DeviceAnnouncement announcement) =>
+        JsonSerializer.SerializeToUtf8Bytes(announcement, JsonStore.Options);
+
+    public static DeviceAnnouncement? DeserializeDeviceAnnouncement(ReadOnlySpan<byte> bytes)
+    {
+        try
+        {
+            var item = JsonSerializer.Deserialize<DeviceAnnouncement>(bytes, JsonStore.Options);
+            return item?.Magic == DeviceAnnouncementMagic ? item : null;
+        }
+        catch { return null; }
+    }
 
     public static byte[] SerializeAnnouncement(DiscoveryAnnouncement announcement) =>
         JsonSerializer.SerializeToUtf8Bytes(announcement, JsonStore.Options);

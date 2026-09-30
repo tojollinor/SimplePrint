@@ -2,6 +2,76 @@ using System.Net;
 
 namespace SimplePrint.Common;
 
+public sealed class SimplePrintConfig
+{
+    public Guid DeviceId { get; set; } = Guid.NewGuid();
+    public string DeviceName { get; set; } = Environment.MachineName;
+    public int DiscoveryPort { get; set; } = Protocol.DefaultDiscoveryPort;
+    public int GatewayPort { get; set; } = Protocol.DefaultGatewayPort;
+    public int DiagnosticsPort { get; set; } = Protocol.DefaultDiagnosticsPort;
+    public int LocalPortStart { get; set; } = 19100;
+    public int LocalPortEnd { get; set; } = 19999;
+    public List<string> ManualPeers { get; set; } = [];
+    public List<SharedPrinterConfig> SharedPrinters { get; set; } = [];
+    public List<NetworkPrinterMapping> NetworkPrinters { get; set; } = [];
+}
+
+public sealed class NetworkPrinterMapping
+{
+    public Guid SourceDeviceId { get; set; }
+    public Guid PrinterId { get; set; }
+    public string SourceDeviceName { get; set; } = "";
+    public string PrinterDisplayName { get; set; } = "";
+    public string LocalPrinterName { get; set; } = "";
+    public string DriverName { get; set; } = "";
+    public string PortName { get; set; } = "";
+    public int LocalProxyPort { get; set; }
+    public string TransportMode { get; set; } = PrinterTransport.Tunnel;
+    public string DirectAddress { get; set; } = "";
+    public string DeviceUuid { get; set; } = "";
+    public bool UseExistingQueue { get; set; }
+    public bool Enabled { get; set; } = true;
+}
+
+public sealed class DeviceAnnouncement
+{
+    public string Magic { get; set; } = Protocol.DeviceAnnouncementMagic;
+    public int Version { get; set; } = Protocol.Version;
+    public string AppVersion { get; set; } = "";
+    public Guid DeviceId { get; set; }
+    public string DeviceName { get; set; } = "";
+    public int GatewayPort { get; set; } = Protocol.DefaultGatewayPort;
+    public int DiagnosticsPort { get; set; } = Protocol.DefaultDiagnosticsPort;
+    public List<DiscoveredPrinter> Printers { get; set; } = [];
+    public List<PrinterSubscriptionAnnouncement> Subscriptions { get; set; } = [];
+}
+
+public sealed class PrinterSubscriptionAnnouncement
+{
+    public Guid SourceDeviceId { get; set; }
+    public Guid PrinterId { get; set; }
+}
+
+public sealed record DiscoveredDevice(
+    DeviceAnnouncement Announcement,
+    IPAddress Address,
+    DateTimeOffset SeenAt);
+
+public sealed class DevicePresence
+{
+    public Guid DeviceId { get; set; }
+    public string DeviceName { get; set; } = "";
+    public string Address { get; set; } = "";
+    public string AppVersion { get; set; } = "";
+    public int ProtocolVersion { get; set; }
+    public int GatewayPort { get; set; }
+    public int DiagnosticsPort { get; set; }
+    public List<DiscoveredPrinter> Printers { get; set; } = [];
+    public List<PrinterSubscriptionAnnouncement> Subscriptions { get; set; } = [];
+    public DateTimeOffset LastSeen { get; set; }
+}
+
+
 public sealed class ServerConfig
 {
     public Guid ServerId { get; set; } = Guid.NewGuid();
@@ -108,6 +178,7 @@ public sealed class LocalPrinterInfo
     public string DriverName { get; set; } = "";
     public string PortName { get; set; } = "";
     public string PrinterStatus { get; set; } = "";
+    public string Comment { get; set; } = "";
     public string TransportMode { get; set; } = PrinterTransport.Tunnel;
     public string DirectAddress { get; set; } = "";
     public string DeviceUuid { get; set; } = "";
