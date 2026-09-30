@@ -20,6 +20,16 @@ public sealed class MainForm : Form
     private readonly Label _deviceName = new() { AutoSize = true };
     private readonly Label _version = new() { AutoSize = true };
     private readonly Label _serviceStatus = new() { AutoSize = true };
+    private readonly Label _settingsServiceStatus = ValueLabel();
+    private readonly Label _settingsNetworkStatus = ValueLabel();
+    private readonly Label _settingsFirewallStatus = ValueLabel();
+    private readonly Label _startupStatus = ValueLabel();
+    private readonly CheckBox _startupTray = new()
+    {
+        AutoSize = true,
+        Text = "GUI beim Windows-Start im Infobereich starten",
+        Checked = true
+    };
 
     private readonly Label _overviewDevice = ValueLabel();
     private readonly Label _overviewShared = ValueLabel();
@@ -61,6 +71,8 @@ public sealed class MainForm : Form
     private bool _allowExit;
     private bool _suppressNetworkTreeCheck;
     private bool _suppressDiagnosticsTreeCheck;
+    private bool _updateCheckRunning;
+    private string? _lastOfferedUpdate;
 
     public MainForm()
     {
@@ -85,6 +97,7 @@ public sealed class MainForm : Form
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("SimplePrint öffnen", null, (_, _) => ShowFromTray());
         trayMenu.Items.Add("Aktualisieren", null, async (_, _) => await RefreshAllAsync(true));
+        trayMenu.Items.Add("Nach Updates suchen", null, async (_, _) => await CheckForUpdatesAsync(true));
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Beenden", null, (_, _) => ExitApplication());
 
@@ -174,6 +187,16 @@ public sealed class MainForm : Form
             }
 
             await RefreshAllAsync(true);
+
+            if (!string.IsNullOrWhiteSpace(Program.UpdateSuccessVersion))
+            {
+                ShowFromTray();
+                MessageBox.Show(
+                    $"SimplePrint wurde erfolgreich auf {Program.UpdateSuccessVersion} aktualisiert.",
+                    "SimplePrint Update",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
         };
     }
 
