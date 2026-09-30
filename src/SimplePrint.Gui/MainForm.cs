@@ -722,6 +722,608 @@ public sealed class MainForm : Form
         }
     }
 
+    private async Task SaveOwnPrinterSelectionAsync()
+    {
+        try
+        {
+            SetBusy("Druckerfreigaben werden gespeichert …");
+
+            var selected = _ownPrinters.Rows
+                .Cast<DataGridViewRow>()
+                .Where(row =>
+                    row.Tag is LocalPrinterInfo &&
+                    row.Cells["shared"].Value is bool use &&
+                    use)
+                .Select(row => (LocalPrinterInfo)row.Tag!)
+                .ToList();
+
+            var old = _config.SharedPrinters
+                .GroupBy(x => x.QueueName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    x => x.Key,
+                    x => x.First(),
+                    StringComparer.OrdinalIgnoreCase);
+
+            var next = new List<SharedPrinterConfig>();
+
+            foreach (var printer in selected)
+            {
+                if (old.TryGetValue(printer.Name, out var existing))
+                {
+                    existing.DisplayName = printer.Name;
+                    existing.DriverName = printer.DriverName;
+                    existing.PortName = printer.PortName;
+                    existing.TransportMode = printer.TransportMode;
+                    existing.DirectAddress = printer.DirectAddress;
+                    existing.DeviceUuid = printer.DeviceUuid;
+                    existing.Enabled = true;
+                    next.Add(existing);
+                }
+                else
+                {
+                    next.Add(new SharedPrinterConfig
+                    {
+                        QueueName = printer.Name,
+                        DisplayName = printer.Name,
+                        DriverName = printer.DriverName,
+                        PortName = printer.PortName,
+                        TransportMode = printer.TransportMode,
+                        DirectAddress = printer.DirectAddress,
+                        DeviceUuid = printer.DeviceUuid,
+                        Enabled = true
+                    });
+                }
+            }
+
+            _config.SharedPrinters = next;
+            UnifiedConfigStore.Save(_config);
+
+            await Task.Delay(1400);
+            await RefreshAllAsync(false);
+
+            SetStatus($"✓ {next.Count} Druckerfreigabe(n) gespeichert");
+            MessageBox.Show(
+                $"{next.Count} eigene Druckerfreigabe(n) wurden gespeichert.",
+                "SimplePrint",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (OperationCanceledException ex)
+        {
+            SetStatus("Freigabe abgebrochen");
+            MessageBox.Show(
+                ex.Message,
+                "SimplePrint",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Druckerfreigaben konnten nicht gespeichert werden");
+            MessageBox.Show(
+                ex.Message,
+                "Freigaben speichern",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private async Task SaveNetworkPrinterSelectionAsync()
+    {
+        try
+        {
+            SetBusy("Netzwerkdruckerauswahl wird übernommen …");
+
+            var activePeerIds = _peers
+                .Select(x => x.DeviceId)
+                .ToHashSet();
+
+            var desired = new Dictionary<(Guid DeviceId, Guid PrinterId), NetworkPrinterTag>();
+
+            foreach (TreeNode root in _networkPrinters.Nodes)
+            {
+                foreach (TreeNode child in root.Nodes)
+                {
+                    if (child.Tag is not NetworkPrinterTag tag || !child.Checked)
+                        continue;
+
+                    if (tag.Device.ProtocolVersion != Protocol.Version)
+                    {
+                        throw new InvalidOperationException(
+                            $"'{tag.Device.DeviceName}' verwendet Protokoll {tag.Device.ProtocolVersion}; " +
+                            $"benötigt wird P{Protocol.Version}.");
+                    }
+
+                    desired[(tag.Device.DeviceId, tag.Printer.Id)] = tag;
+                }
+            }
+
+            var existingFromActivePeers = _config.NetworkPrinters
+                .Where(x => activePeerIds.Contains(x.SourceDeviceId))
+                .ToList();
+
+            foreach (var mapping in existingFromActivePeers)
+            {
+                if (desired.ContainsKey((mapping.SourceDeviceId, mapping.PrinterId)))
+                    continue;
+
+                SetBusy($"'{mapping.PrinterDisplayName}' wird entfernt …");
+                await PrinterInstaller.RemoveAsync(mapping);
+                _config.NetworkPrinters.Remove(mapping);
+                UnifiedConfigStore.Save(_config);
+            }
+
+            foreach (var tag in desired.Values)
+            {
+                var current = _config.NetworkPrinters.FirstOrDefault(x =>
+                    x.SourceDeviceId == tag.Device.DeviceId &&
+                    x.PrinterId == tag.Printer.Id);
+
+                if (current is not null)
+                {
+                    var shareFallbackMatches =
+                        string.Equals(
+                            current.TransportMode,
+                            PrinterTransport.WindowsShare,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        PrinterTransport.IsDeviceDirect(tag.Printer.TransportMode) &&
+                        string.Equals(
+                            current.DirectAddress,
+                            PrinterTransport.GetWindowsSharePath(
+                                tag.Device.Address,
+                                tag.Printer.Id),
+                            StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(
+                            current.DeviceUuid,
+                            tag.Printer.DeviceUuid,
+                            StringComparison.OrdinalIgnoreCase);
+
+                    var routeChanged =
+                        !shareFallbackMatches &&
+                        (!string.Equals(
+                             current.TransportMode,
+                             tag.Printer.TransportMode,
+                             StringComparison.OrdinalIgnoreCase) ||
+                         !string.Equals(
+                             current.DirectAddress,
+                             tag.Printer.DirectAddress,
+                             StringComparison.OrdinalIgnoreCase) ||
+                         !string.Equals(
+                             current.DeviceUuid,
+                             tag.Printer.DeviceUuid,
+                             StringComparison.OrdinalIgnoreCase));
+
+                    var classDriverMismatch =
+                        !PrinterTransport.IsDirect(tag.Printer.TransportMode) &&
+                        PrinterTransport.IsClassDriver(tag.Printer.DriverName) &&
+                        !string.Equals(
+                            current.DriverName,
+                            tag.Printer.DriverName,
+                            StringComparison.OrdinalIgnoreCase);
+
+                    if (!routeChanged && !classDriverMismatch)
+                    {
+                        current.SourceDeviceName = tag.Device.DeviceName;
+                        current.PrinterDisplayName = tag.Printer.DisplayName;
+                        current.Enabled = true;
+                        continue;
+                    }
+
+                    SetBusy($"Druckpfad für '{tag.Printer.DisplayName}' wird aktualisiert …");
+                    await PrinterInstaller.RemoveAsync(current);
+                    _config.NetworkPrinters.Remove(current);
+                    UnifiedConfigStore.Save(_config);
+                }
+
+                await InstallNetworkPrinterAsync(tag);
+            }
+
+            UnifiedConfigStore.Save(_config);
+            await Task.Delay(1400);
+            await RefreshAllAsync(true);
+
+            SetStatus("✓ Netzwerkdruckerauswahl wurde übernommen");
+            MessageBox.Show(
+                "Die Netzwerkdruckerauswahl wurde übernommen.",
+                "SimplePrint",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (OperationCanceledException ex)
+        {
+            SetStatus("Administratorfreigabe abgebrochen");
+            MessageBox.Show(
+                ex.Message,
+                "Administratorfreigabe abgebrochen",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+
+            await RefreshAllAsync(true);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("✗ Netzwerkdruckerauswahl fehlgeschlagen");
+            MessageBox.Show(
+                ex.Message,
+                "Druckerauswahl fehlgeschlagen",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+
+            await RefreshAllAsync(true);
+        }
+        finally
+        {
+            SetIdle();
+        }
+    }
+
+    private async Task InstallNetworkPrinterAsync(NetworkPrinterTag tag)
+    {
+        var hasDirectTarget =
+            !string.IsNullOrWhiteSpace(tag.Printer.DirectAddress) ||
+            (string.Equals(
+                 tag.Printer.TransportMode,
+                 PrinterTransport.Wsd,
+                 StringComparison.OrdinalIgnoreCase) &&
+             !string.IsNullOrWhiteSpace(tag.Printer.DeviceUuid));
+
+        var direct =
+            PrinterTransport.IsDirect(tag.Printer.TransportMode) &&
+            hasDirectTarget;
+
+        if (PrinterTransport.IsMicrosoftIppClassDriver(tag.Printer.DriverName) &&
+            !direct)
+        {
+            throw new InvalidOperationException(
+                $"'{tag.Printer.DisplayName}' verwendet den Microsoft IPP Class Driver, " +
+                $"aber '{tag.Device.DeviceName}' hat keine direkt nutzbare IPP-/WSD-Adresse " +
+                "oder WSD-Geräte-UUID veröffentlicht. Ein RAW-Tunnel wird für diesen Treiber " +
+                "nicht angelegt.");
+        }
+
+        ReusableDirectPrinter? reusable = null;
+
+        if (direct)
+        {
+            reusable = await PrinterInstaller.FindReusableDirectPrinterAsync(
+                tag.Printer.TransportMode,
+                tag.Printer.DirectAddress,
+                tag.Printer.DeviceUuid,
+                tag.Printer.PortName,
+                tag.Printer.DisplayName);
+        }
+
+        string driver;
+
+        if (direct)
+        {
+            driver = reusable?.DriverName ?? tag.Printer.DriverName;
+        }
+        else
+        {
+            var drivers = await PrinterInstaller.GetDriverNamesAsync();
+            if (drivers.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Auf diesem PC wurden keine Druckertreiber gefunden.");
+            }
+
+            driver = drivers.FirstOrDefault(x =>
+                         x.Equals(
+                             tag.Printer.DriverName,
+                             StringComparison.OrdinalIgnoreCase))
+                     ?? "";
+
+            if (PrinterTransport.IsClassDriver(tag.Printer.DriverName))
+            {
+                if (string.IsNullOrWhiteSpace(driver))
+                {
+                    SetBusy(
+                        $"Treiber '{tag.Printer.DriverName}' wird aus dem Windows-Treiberspeicher installiert …");
+
+                    await PrinterInstaller.EnsureDriverInstalledAsync(
+                        tag.Printer.DriverName);
+
+                    drivers = await PrinterInstaller.GetDriverNamesAsync();
+                    driver = drivers.FirstOrDefault(x =>
+                                 x.Equals(
+                                     tag.Printer.DriverName,
+                                     StringComparison.OrdinalIgnoreCase))
+                             ?? "";
+                }
+
+                if (string.IsNullOrWhiteSpace(driver))
+                {
+                    throw new InvalidOperationException(
+                        $"Der erforderliche Treiber '{tag.Printer.DriverName}' ist auf diesem Gerät nicht verfügbar.");
+                }
+            }
+            else if (string.IsNullOrWhiteSpace(driver))
+            {
+                driver = ChooseDriver(drivers, tag.Printer.DriverName) ?? "";
+                if (string.IsNullOrWhiteSpace(driver))
+                {
+                    throw new OperationCanceledException(
+                        "Die Treiberauswahl wurde abgebrochen.");
+                }
+            }
+        }
+
+        var shortDevice = tag.Device.DeviceId.ToString("N")[..8];
+        var shortPrinter = tag.Printer.Id.ToString("N")[..8];
+        var localPort = direct ? 0 : AllocatePort();
+
+        var portName = reusable?.PortName ??
+            (direct
+                ? $"SimplePrintDirect_{shortDevice}_{shortPrinter}"
+                : $"SimplePrint_{shortDevice}_{shortPrinter}");
+
+        var localName = reusable?.Name ??
+            UniqueLocalName($"{tag.Printer.DisplayName} (SimplePrint)");
+
+        var mapping = new NetworkPrinterMapping
+        {
+            SourceDeviceId = tag.Device.DeviceId,
+            PrinterId = tag.Printer.Id,
+            SourceDeviceName = tag.Device.DeviceName,
+            PrinterDisplayName = tag.Printer.DisplayName,
+            LocalPrinterName = localName,
+            DriverName = driver,
+            PortName = portName,
+            LocalProxyPort = localPort,
+            TransportMode = direct
+                ? tag.Printer.TransportMode
+                : PrinterTransport.Tunnel,
+            DirectAddress = direct
+                ? tag.Printer.DirectAddress
+                : "",
+            DeviceUuid = direct
+                ? tag.Printer.DeviceUuid
+                : "",
+            UseExistingQueue = reusable is not null,
+            Enabled = true
+        };
+
+        _config.NetworkPrinters.Add(mapping);
+        UnifiedConfigStore.Save(_config);
+
+        try
+        {
+            if (!direct)
+            {
+                SetBusy(
+                    $"Lokaler SimplePrint-Proxy auf Port {localPort} wird gestartet …");
+
+                if (!await WaitForLocalProxyAsync(
+                        localPort,
+                        TimeSpan.FromSeconds(8)))
+                {
+                    throw new InvalidOperationException(
+                        $"Der SimplePrint-Dienst lauscht nicht auf 127.0.0.1:{localPort}. " +
+                        "Die Windows-Druckerqueue wurde deshalb nicht angelegt.");
+                }
+            }
+            else if (mapping.UseExistingQueue)
+            {
+                SetBusy(
+                    $"Vorhandene Windows-Druckerqueue '{mapping.LocalPrinterName}' wird verwendet …");
+            }
+            else
+            {
+                SetBusy(
+                    $"Direkte {mapping.TransportMode}-Druckerqueue wird eingerichtet …");
+            }
+
+            try
+            {
+                await PrinterInstaller.InstallAsync(mapping);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception directError)
+                when (direct &&
+                      !mapping.UseExistingQueue &&
+                      PrinterTransport.IsDeviceDirect(mapping.TransportMode))
+            {
+                var originalMode = mapping.TransportMode;
+                var sharePath = PrinterTransport.GetWindowsSharePath(
+                    tag.Device.Address,
+                    tag.Printer.Id);
+
+                SetBusy(
+                    $"Direkte {originalMode}-Verbindung nicht möglich. " +
+                    "SimplePrint-Druckerfreigabe wird als Fallback versucht …");
+
+                mapping.TransportMode = PrinterTransport.WindowsShare;
+                mapping.DirectAddress = sharePath;
+                mapping.LocalPrinterName = sharePath;
+                mapping.PortName = sharePath;
+                mapping.LocalProxyPort = 0;
+                mapping.UseExistingQueue = false;
+                UnifiedConfigStore.Save(_config);
+
+                try
+                {
+                    await PrinterInstaller.InstallAsync(mapping);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception shareError)
+                {
+                    throw new InvalidOperationException(
+                        $"Der Drucker konnte weder direkt per {originalMode} noch über die " +
+                        $"SimplePrint-Freigabe verbunden werden.\r\n\r\n" +
+                        $"Direkte Verbindung: {directError.Message}\r\n\r\n" +
+                        $"Freigabe {sharePath}: {shareError.Message}",
+                        shareError);
+                }
+            }
+        }
+        catch
+        {
+            _config.NetworkPrinters.Remove(mapping);
+            UnifiedConfigStore.Save(_config);
+            throw;
+        }
+    }
+
+    private static async Task<bool> WaitForLocalProxyAsync(
+        int port,
+        TimeSpan timeout)
+    {
+        var started = DateTime.UtcNow;
+
+        while (DateTime.UtcNow - started < timeout)
+        {
+            try
+            {
+                var listeners = System.Net.NetworkInformation.IPGlobalProperties
+                    .GetIPGlobalProperties()
+                    .GetActiveTcpListeners();
+
+                if (listeners.Any(x =>
+                        x.Port == port &&
+                        System.Net.IPAddress.IsLoopback(x.Address)))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            await Task.Delay(250);
+        }
+
+        return false;
+    }
+
+    private int AllocatePort()
+    {
+        var used = _config.NetworkPrinters
+            .Where(x => x.LocalProxyPort > 0)
+            .Select(x => x.LocalProxyPort)
+            .ToHashSet();
+
+        for (var port = _config.LocalPortStart;
+             port <= _config.LocalPortEnd;
+             port++)
+        {
+            if (used.Contains(port))
+                continue;
+
+            try
+            {
+                var listener = new System.Net.Sockets.TcpListener(
+                    System.Net.IPAddress.Loopback,
+                    port);
+
+                listener.Start();
+                listener.Stop();
+                return port;
+            }
+            catch
+            {
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Kein freier lokaler SimplePrint-Port verfügbar.");
+    }
+
+    private string UniqueLocalName(string requested)
+    {
+        var names = _config.NetworkPrinters
+            .Select(x => x.LocalPrinterName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (!names.Contains(requested))
+            return requested;
+
+        for (var i = 2; i < 100; i++)
+        {
+            var candidate = $"{requested} ({i})";
+            if (!names.Contains(candidate))
+                return candidate;
+        }
+
+        return requested + " (weitere)";
+    }
+
+    private string? ChooseDriver(
+        List<string> drivers,
+        string suggested)
+    {
+        using var dialog = new Form
+        {
+            Text = "Druckertreiber auswählen",
+            Width = 700,
+            Height = 210,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false
+        };
+
+        var info = new Label
+        {
+            Left = 20,
+            Top = 15,
+            Width = 640,
+            Height = 40,
+            Text =
+                $"Das Quellgerät verwendet '{suggested}'. " +
+                "Wähle den passenden lokal installierten Treiber:"
+        };
+
+        var combo = new ComboBox
+        {
+            Left = 20,
+            Top = 65,
+            Width = 640,
+            DropDownStyle = ComboBoxStyle.DropDownList
+        };
+
+        combo.Items.AddRange(drivers.Cast<object>().ToArray());
+        if (combo.Items.Count > 0)
+            combo.SelectedIndex = 0;
+
+        var ok = new Button
+        {
+            Text = "Verwenden",
+            Left = 470,
+            Top = 110,
+            Width = 90,
+            DialogResult = DialogResult.OK
+        };
+
+        var cancel = new Button
+        {
+            Text = "Abbrechen",
+            Left = 570,
+            Top = 110,
+            Width = 90,
+            DialogResult = DialogResult.Cancel
+        };
+
+        dialog.Controls.AddRange([info, combo, ok, cancel]);
+        dialog.AcceptButton = ok;
+        dialog.CancelButton = cancel;
+
+        return dialog.ShowDialog(this) == DialogResult.OK
+            ? combo.SelectedItem?.ToString()
+            : null;
+    }
+
     private void RefreshNetworkPrinterTree()
     {
         _networkPrinters.BeginUpdate();
