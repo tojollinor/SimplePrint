@@ -507,7 +507,7 @@ if(Get-Printer -Name $connection -ErrorAction SilentlyContinue) {{
   throw ('Die verbundene Server-Druckerqueue konnte nicht entfernt werden: ' + $connection)
 }}
 ";
-            return PrivilegeHelper.RunPowerShellElevatedAsync(shareScript);
+            return RunWithElevationIfRequiredAsync(shareScript);
         }
 
         if (PrinterTransport.IsDirect(mapping.TransportMode))
