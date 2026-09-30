@@ -486,60 +486,190 @@ public sealed class MainForm : Form
     private TabPage CreateSettingsTab()
     {
         var tab = new TabPage("Einstellungen");
-        var panel = new TableLayoutPanel
+
+        var panel = new FlowLayoutPanel
         {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            Padding = new Padding(20),
-            ColumnCount = 2,
-            RowCount = 5
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Padding = new Padding(20)
         };
 
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-        panel.Controls.Add(BoldLabel("Gerätename"), 0, 0);
-        panel.Controls.Add(new Label
-        {
-            Name = "SettingsDeviceName",
-            AutoSize = true,
-            Text = Environment.MachineName
-        }, 1, 0);
-
-        panel.Controls.Add(BoldLabel("Discovery-Port"), 0, 1);
-        panel.Controls.Add(new Label
-        {
-            Name = "SettingsDiscovery",
-            AutoSize = true,
-            Text = Protocol.DefaultDiscoveryPort.ToString()
-        }, 1, 1);
-
-        panel.Controls.Add(BoldLabel("Print-Gateway"), 0, 2);
-        panel.Controls.Add(new Label
-        {
-            Name = "SettingsGateway",
-            AutoSize = true,
-            Text = Protocol.DefaultGatewayPort.ToString()
-        }, 1, 2);
-
-        panel.Controls.Add(BoldLabel("Diagnose-Port"), 0, 3);
-        panel.Controls.Add(new Label
-        {
-            Name = "SettingsDiagnostics",
-            AutoSize = true,
-            Text = Protocol.DefaultDiagnosticsPort.ToString()
-        }, 1, 3);
-
-        panel.Controls.Add(BoldLabel("Konfiguration"), 0, 4);
         panel.Controls.Add(new Label
         {
             AutoSize = true,
-            MaximumSize = new Size(620, 0),
+            Font = new Font(Font, FontStyle.Bold),
+            Text = "Gerät"
+        });
+
+        var deviceTable = new TableLayoutPanel
+        {
+            AutoSize = true,
+            Width = 820,
+            ColumnCount = 2,
+            RowCount = 7,
+            Margin = new Padding(0, 8, 0, 12)
+        };
+
+        deviceTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+        deviceTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 560));
+
+        AddSettingsRow(deviceTable, 0, "Gerätename", "SettingsDeviceName");
+        AddSettingsRow(deviceTable, 1, "Discovery-Port", "SettingsDiscovery");
+        AddSettingsRow(deviceTable, 2, "Print-Gateway", "SettingsGateway");
+        AddSettingsRow(deviceTable, 3, "Diagnose-Port", "SettingsDiagnostics");
+
+        deviceTable.Controls.Add(BoldLabel("Dienst"), 0, 4);
+        deviceTable.Controls.Add(_settingsServiceStatus, 1, 4);
+
+        deviceTable.Controls.Add(BoldLabel("Netzwerk"), 0, 5);
+        deviceTable.Controls.Add(_settingsNetworkStatus, 1, 5);
+
+        deviceTable.Controls.Add(BoldLabel("Firewall"), 0, 6);
+        deviceTable.Controls.Add(_settingsFirewallStatus, 1, 6);
+
+        panel.Controls.Add(deviceTable);
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold),
+            Margin = new Padding(0, 6, 0, 4),
+            Text = "Autostart & Dienst"
+        });
+
+        panel.Controls.Add(_startupStatus);
+        panel.Controls.Add(_startupTray);
+
+        var startupButtons = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = true,
+            MaximumSize = new Size(820, 0),
+            Margin = new Padding(0, 6, 0, 12)
+        };
+
+        startupButtons.Controls.Add(MakeButton(
+            "Autostart aktivieren",
+            async (_, _) => await SetStartupAsync(true)));
+
+        startupButtons.Controls.Add(MakeButton(
+            "Autostart deaktivieren",
+            async (_, _) => await SetStartupAsync(false)));
+
+        startupButtons.Controls.Add(MakeButton(
+            "SimplePrint-Dienst neu starten",
+            async (_, _) => await RestartServiceAsync()));
+
+        panel.Controls.Add(startupButtons);
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold),
+            Margin = new Padding(0, 6, 0, 4),
+            Text = "Firewall"
+        });
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(820, 0),
+            Text =
+                "SimplePrint benötigt eingehend UDP für die Geräteerkennung sowie TCP für " +
+                "Druckdaten und Diagnose. Die Regeln gelten ausschließlich für Privat/Domäne " +
+                "und LocalSubnet."
+        });
+
+        var firewallButtons = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = true,
+            MaximumSize = new Size(820, 0),
+            Margin = new Padding(0, 6, 0, 12)
+        };
+
+        firewallButtons.Controls.Add(MakeButton(
+            "Firewall-Regeln anwenden",
+            async (_, _) => await ApplyFirewallAsync()));
+
+        firewallButtons.Controls.Add(MakeButton(
+            "Firewall-Regeln zurücksetzen",
+            async (_, _) => await RemoveFirewallAsync()));
+
+        firewallButtons.Controls.Add(MakeButton(
+            "Firewallstatus aktualisieren",
+            async (_, _) => await RefreshSystemManagementAsync()));
+
+        panel.Controls.Add(firewallButtons);
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold),
+            Margin = new Padding(0, 6, 0, 4),
+            Text = "Updates"
+        });
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(820, 0),
+            Text =
+                "Die Updateprüfung verwendet das gemeinsame SimplePrint-Release. " +
+                "Die eigentliche Aktualisierung läuft nach Administratorfreigabe automatisch."
+        });
+
+        var updateButtons = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = true,
+            MaximumSize = new Size(820, 0),
+            Margin = new Padding(0, 6, 0, 12)
+        };
+
+        updateButtons.Controls.Add(MakeButton(
+            "Nach Updates suchen",
+            async (_, _) => await CheckForUpdatesAsync(true)));
+
+        panel.Controls.Add(updateButtons);
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold),
+            Margin = new Padding(0, 6, 0, 4),
+            Text = "Konfiguration"
+        });
+
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(820, 0),
             Text = AppPaths.DeviceConfig
-        }, 1, 4);
+        });
 
         tab.Controls.Add(panel);
         return tab;
+    }
+
+    private static void AddSettingsRow(
+        TableLayoutPanel panel,
+        int row,
+        string title,
+        string controlName)
+    {
+        panel.Controls.Add(BoldLabel(title), 0, row);
+        panel.Controls.Add(
+            new Label
+            {
+                Name = controlName,
+                AutoSize = true,
+                Text = "…"
+            },
+            1,
+            row);
     }
 
     private void ConfigureGrids()
