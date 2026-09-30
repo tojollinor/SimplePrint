@@ -19,7 +19,16 @@ public sealed class FileLog
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
                 RotateIfNeeded();
-                File.AppendAllText(_path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}", Encoding.UTF8);
+
+                // Mehrere Komponenten des Dienstes schreiben in dieselbe Logdatei.
+                // Mit geteiltem Zugriff gehen dabei keine Zeilen verloren.
+                using var stream = new FileStream(
+                    _path,
+                    FileMode.Append,
+                    FileAccess.Write,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using var writer = new StreamWriter(stream, Encoding.UTF8);
+                writer.Write($"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}");
             }
         }
         catch { }
