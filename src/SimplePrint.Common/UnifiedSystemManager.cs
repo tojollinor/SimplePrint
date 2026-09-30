@@ -18,20 +18,20 @@ public static class UnifiedSystemManager
     public static async Task<UnifiedFirewallState> GetFirewallStateAsync(
         SimplePrintConfig config)
     {
-        var script = $@"
-function Get-SimplePrintRuleState($name,$display,$protocol,$port) {{
+        var script = $$"""
+function Get-SimplePrintRuleState($name,$display,$protocol,$port) {
   $r = Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue |
     Select-Object -First 1
 
-  if(-not $r) {{
-    return [pscustomobject]@{{
+  if(-not $r) {
+    return [pscustomobject]@{
       Name=$display
       Exists=$false
       Enabled=$false
       Correct=$false
       Detail='Regel fehlt'
-    }}
-  }}
+    }
+  }
 
   $pf = $r | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue
   $af = $r | Get-NetFirewallAddressFilter -ErrorAction SilentlyContinue
@@ -64,7 +64,7 @@ function Get-SimplePrintRuleState($name,$display,$protocol,$port) {{
     $portOk -and
     $addressOk
 
-  [pscustomobject]@{{
+  [pscustomobject]@{
     Name=$display
     Exists=$true
     Enabled=$enabled
@@ -74,15 +74,15 @@ function Get-SimplePrintRuleState($name,$display,$protocol,$port) {{
             '; Protocol=' + $protocolText +
             '; Port=' + [string]$pf.LocalPort +
             '; Remote=' + $remote)
-  }}
-}}
+  }
+}
 
 @(
-  Get-SimplePrintRuleState 'SimplePrint-Discovery' 'SimplePrint Discovery' 'UDP' {config.DiscoveryPort}
-  Get-SimplePrintRuleState 'SimplePrint-Gateway' 'SimplePrint Print Gateway' 'TCP' {config.GatewayPort}
-  Get-SimplePrintRuleState 'SimplePrint-Diagnostics' 'SimplePrint Diagnostics' 'TCP' {config.DiagnosticsPort}
+  Get-SimplePrintRuleState 'SimplePrint-Discovery' 'SimplePrint Discovery' 'UDP' {{config.DiscoveryPort}}
+  Get-SimplePrintRuleState 'SimplePrint-Gateway' 'SimplePrint Print Gateway' 'TCP' {{config.GatewayPort}}
+  Get-SimplePrintRuleState 'SimplePrint-Diagnostics' 'SimplePrint Diagnostics' 'TCP' {{config.DiagnosticsPort}}
 ) | ConvertTo-Json -Compress
-";
+""";
 
         var result = await PowerShellRunner.RunAsync(script);
         if (result.ExitCode != 0)
@@ -115,7 +115,7 @@ function Get-SimplePrintRuleState($name,$display,$protocol,$port) {{
 
     public static Task ApplyFirewallAsync(SimplePrintConfig config)
     {
-        var script = $@"
+        var script = $$"""
 $ErrorActionPreference='Stop'
 
 $names = @(
@@ -124,50 +124,50 @@ $names = @(
   'SimplePrint-Diagnostics'
 )
 
-foreach($name in $names) {{
+foreach($name in $names) {
   Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue |
     Remove-NetFirewallRule
-}}
+}
 
-New-NetFirewallRule -Name 'SimplePrint-Discovery' -DisplayName 'SimplePrint Discovery' -Description 'SimplePrint Geräteerkennung im lokalen Netzwerk' -Direction Inbound -Action Allow -Enabled True -Protocol UDP -LocalPort {config.DiscoveryPort} -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
-New-NetFirewallRule -Name 'SimplePrint-Gateway' -DisplayName 'SimplePrint Print Gateway' -Description 'SimplePrint Druckdaten und Status im lokalen Netzwerk' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort {config.GatewayPort} -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
-New-NetFirewallRule -Name 'SimplePrint-Diagnostics' -DisplayName 'SimplePrint Diagnostics' -Description 'SimplePrint Diagnoseabruf im lokalen Netzwerk' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort {config.DiagnosticsPort} -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+New-NetFirewallRule -Name 'SimplePrint-Discovery' -DisplayName 'SimplePrint Discovery' -Description 'SimplePrint Geräteerkennung im lokalen Netzwerk' -Direction Inbound -Action Allow -Enabled True -Protocol UDP -LocalPort {{config.DiscoveryPort}} -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+New-NetFirewallRule -Name 'SimplePrint-Gateway' -DisplayName 'SimplePrint Print Gateway' -Description 'SimplePrint Druckdaten und Status im lokalen Netzwerk' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort {{config.GatewayPort}} -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+New-NetFirewallRule -Name 'SimplePrint-Diagnostics' -DisplayName 'SimplePrint Diagnostics' -Description 'SimplePrint Diagnoseabruf im lokalen Netzwerk' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort {{config.DiagnosticsPort}} -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
 
-function Assert-SimplePrintRule($name,$protocol,$port) {{
+function Assert-SimplePrintRule($name,$port) {
   $r = Get-NetFirewallRule -Name $name -ErrorAction Stop
   $pf = $r | Get-NetFirewallPortFilter
   $af = $r | Get-NetFirewallAddressFilter
 
-  if([string]$r.Enabled -ne 'True') {{
+  if([string]$r.Enabled -ne 'True') {
     throw "$name ist nicht aktiviert."
-  }}
+  }
 
   if([string]$r.Direction -ne 'Inbound' -or
-     [string]$r.Action -ne 'Allow') {{
+     [string]$r.Action -ne 'Allow') {
     throw "$name hat eine ungültige Richtung oder Aktion."
-  }}
+  }
 
   $profile = [string]$r.Profile
   if($profile -notmatch 'Private' -or
      $profile -notmatch 'Domain' -or
-     $profile -match 'Public') {{
+     $profile -match 'Public') {
     throw "$name hat ein falsches Firewallprofil: $profile"
-  }}
+  }
 
-  if([string]$pf.LocalPort -ne [string]$port) {{
+  if([string]$pf.LocalPort -ne [string]$port) {
     throw "$name hat einen falschen Port: $($pf.LocalPort)"
-  }}
+  }
 
   $remote = @($af.RemoteAddress) -join ','
-  if($remote -notmatch 'LocalSubnet') {{
+  if($remote -notmatch 'LocalSubnet') {
     throw "$name ist nicht auf LocalSubnet beschränkt."
-  }}
-}}
+  }
+}
 
-Assert-SimplePrintRule 'SimplePrint-Discovery' 'UDP' {config.DiscoveryPort}
-Assert-SimplePrintRule 'SimplePrint-Gateway' 'TCP' {config.GatewayPort}
-Assert-SimplePrintRule 'SimplePrint-Diagnostics' 'TCP' {config.DiagnosticsPort}
-";
+Assert-SimplePrintRule 'SimplePrint-Discovery' {{config.DiscoveryPort}}
+Assert-SimplePrintRule 'SimplePrint-Gateway' {{config.GatewayPort}}
+Assert-SimplePrintRule 'SimplePrint-Diagnostics' {{config.DiagnosticsPort}}
+""";
 
         return PrivilegeHelper.RunPowerShellElevatedAsync(script);
     }
