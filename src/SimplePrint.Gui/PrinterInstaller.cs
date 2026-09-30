@@ -1,4 +1,6 @@
+using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SimplePrint.Common;
 
 namespace SimplePrint.Gui;
@@ -57,14 +59,37 @@ internal static class PrinterInstaller
         throw new InvalidOperationException(
             string.IsNullOrWhiteSpace(detail)
                 ? "Windows konnte die Druckeraktion nicht ausführen."
-                : detail);
+                : CleanError(detail));
     }
 
-    private static bool IsCredentialError(string detail) =>
-        detail.Contains("0x8007052e", StringComparison.OrdinalIgnoreCase) ||
-        detail.Contains("alternative Benutzeranmeldeinformationen", StringComparison.OrdinalIgnoreCase) ||
-        detail.Contains("Logon failure", StringComparison.OrdinalIgnoreCase) ||
-        detail.Contains("Anmeldefehler", StringComparison.OrdinalIgnoreCase);
+    // Anmeldeprobleme an der Windows-Freigabe: falsches/fehlendes Passwort (1326),
+    // Kontoeinschränkung z. B. leeres Passwort (1327), Anmeldetyp nicht erlaubt (1385),
+    // Konto deaktiviert (1331), Passwort abgelaufen (1330), Konto gesperrt (1909).
+    private static bool IsCredentialError(string detail)
+    {
+        string[] markers =
+        [
+            "0x8007052e",
+            "0x8007052f",
+            "0x80070569",
+            "0x80070533",
+            "0x80070532",
+            "0x80070775",
+            "alternative Benutzeranmeldeinformationen",
+            "Unbekannter Benutzername",
+            "Kontoeinschränkung",
+            "Logon failure",
+            "Anmeldefehler",
+            "Account restriction"
+        ];
+
+        return markers.Any(x => detail.Contains(x, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsAccessDenied(string detail) =>
+        detail.Contains("0x80070005", StringComparison.OrdinalIgnoreCase) ||
+        detail.Contains("Zugriff verweigert", StringComparison.OrdinalIgnoreCase) ||
+        detail.Contains("Access is denied", StringComparison.OrdinalIgnoreCase);
 
     // \\192.168.1.10\SimplePrint-abcd1234 -> 192.168.1.10
     private static string GetShareServer(string sharePath)
@@ -74,17 +99,27 @@ internal static class PrinterInstaller
         return index > 0 ? trimmed[..index] : trimmed;
     }
 
-    private static string Shorten(string text, int max = 350)
+    // Entfernt das CLIXML-Markup, mit dem Windows PowerShell Fehler über die
+    // Fehlerausgabe liefert, und macht daraus lesbaren Text.
+    private static string CleanError(string? text)
     {
-        var singleLine = string.Join(
-            " ",
-            (text ?? "").Split(
-                ['\r', '\n'],
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        var value = text ?? "";
+        value = Regex.Replace(value, "<[^>]+>", " ");
+        value = value
+            .Replace("_x000D_", " ")
+            .Replace("_x000A_", " ")
+            .Replace("#< CLIXML", " ");
+        value = WebUtility.HtmlDecode(value);
+        return Regex.Replace(value, @"\s+", " ").Trim();
+    }
 
-        return singleLine.Length <= max
-            ? singleLine
-            : singleLine[..max] + " …";
+    private static string Shorten(string? text, int max = 350)
+    {
+        var single = CleanError(text);
+
+        return single.Length <= max
+            ? single
+            : single[..max] + " …";
     }
 
     // Erklärt dem Benutzer, dass die direkte Verbindung nicht funktioniert hat
@@ -248,6 +283,10 @@ Add-PrinterDriver -Name $driver -ErrorAction Stop
 
     private static async Task InstallWindowsShareAsync(NetworkPrinterMapping mapping)
     {
+        // Die verbundene Queue wird nicht nur über den exakten UNC-Namen gesucht, sondern
+        // auch über den Freigabenamen: Windows kann Verbindungen unter dem Servernamen
+        // statt unter der eingegebenen IP-Adresse führen. Der tatsächliche Name wird
+        // zurückgegeben und im Mapping gespeichert.
         var shareScript = $@"
 $ErrorActionPreference='Stop'
 $connection={PowerShellRunner.Quote(mapping.DirectAddress)}
@@ -255,25 +294,60 @@ if([string]::IsNullOrWhiteSpace($connection) -or -not $connection.StartsWith('\\
   throw 'Die Windows-Druckerfreigabe ist ungültig.'
 }}
 
-$existing = Get-Printer -Name $connection -ErrorAction SilentlyContinue
+$shareName = $connection.Substring($connection.LastIndexOf('\') + 1)
+
+function Find-ShareConnection {{
+  @(Get-Printer -ErrorAction SilentlyContinue | Where-Object {{
+    ([string]$_.Name -ieq $connection) -or
+    (([string]$_.Name).StartsWith('\\') -and
+     ([string]$_.Name).EndsWith('\' + $shareName, [System.StringComparison]::OrdinalIgnoreCase))
+  }}) | Select-Object -First 1
+}}
+
+$existing = Find-ShareConnection
 if(-not $existing) {{
   Add-Printer -ConnectionName $connection -ErrorAction Stop
-  Start-Sleep -Milliseconds 800
-  $existing = Get-Printer -Name $connection -ErrorAction SilentlyContinue
+
+  for($i = 0; $i -lt 12 -and -not $existing; $i++) {{
+    Start-Sleep -Milliseconds 500
+    $existing = Find-ShareConnection
+  }}
 }}
 
 if(-not $existing) {{
-  throw ('Windows konnte die Server-Druckerfreigabe nicht verbinden: ' + $connection)
+  $known = (@(Get-Printer -ErrorAction SilentlyContinue | ForEach-Object {{ [string]$_.Name }}) -join '; ')
+  throw ('Windows konnte die Server-Druckerfreigabe nicht verbinden: ' + $connection +
+         ' (Add-Printer meldete keinen Fehler, die Queue wurde danach aber nicht gefunden. Vorhandene Drucker: ' + $known + ')')
 }}
+
+[string]$existing.Name
 ";
 
         AnnounceShareFallback(mapping);
 
+        var credentialsSaved = false;
+
         for (var attempt = 1; ; attempt++)
         {
             var normal = await PowerShellRunner.RunAsync(shareScript);
+
             if (normal.ExitCode == 0)
+            {
+                var actualName = normal.StdOut
+                    .Split(
+                        ['\r', '\n'],
+                        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .LastOrDefault();
+
+                if (!string.IsNullOrWhiteSpace(actualName) &&
+                    actualName.StartsWith(@"\\", StringComparison.Ordinal) &&
+                    !actualName.Equals(mapping.LocalPrinterName, StringComparison.OrdinalIgnoreCase))
+                {
+                    mapping.LocalPrinterName = actualName;
+                }
+
                 return;
+            }
 
             var detail = string.Join(
                 Environment.NewLine,
@@ -281,10 +355,10 @@ if(-not $existing) {{
                     .Where(x => !string.IsNullOrWhiteSpace(x)))
                 .Trim();
 
-            if (IsCredentialError(detail))
+            // Anmeldeproblem: fehlende oder falsche Zugangsdaten. Nach einem bereits
+            // gespeicherten Konto zählt auch "Zugriff verweigert" dazu (Konto ohne Berechtigung).
+            if (IsCredentialError(detail) || (credentialsSaved && IsAccessDenied(detail)))
             {
-                // Kein Admin-Problem: Der Server verlangt eine Windows-Anmeldung.
-                // Zugangsdaten abfragen (bis zu dreimal), speichern und erneut versuchen.
                 var server = GetShareServer(mapping.DirectAddress);
 
                 var credentials = attempt <= 3
@@ -292,7 +366,7 @@ if(-not $existing) {{
                         server,
                         mapping.PrinterDisplayName,
                         mapping.SourceDeviceName,
-                        attempt > 1)
+                        attempt > 1 ? Shorten(detail, 250) : null)
                     : null;
 
                 if (credentials is null)
@@ -305,17 +379,16 @@ if(-not $existing) {{
                         "(Netzwerk- und Freigabecenter → Erweiterte Freigabeeinstellungen).\r\n" +
                         "• Oder ein Konto mit Passwort auf dem Server verwenden und die " +
                         "Zugangsdaten beim nächsten Versuch eingeben.\r\n\r\n" +
-                        detail);
+                        CleanError(detail));
                 }
 
                 ShareCredentialStore.Save(server, credentials.UserName, credentials.Password);
+                credentialsSaved = true;
                 continue;
             }
 
             var elevationLikelyRequired =
-                detail.Contains("0x80070005", StringComparison.OrdinalIgnoreCase) ||
-                detail.Contains("Zugriff verweigert", StringComparison.OrdinalIgnoreCase) ||
-                detail.Contains("Access is denied", StringComparison.OrdinalIgnoreCase) ||
+                IsAccessDenied(detail) ||
                 detail.Contains("Administrator", StringComparison.OrdinalIgnoreCase) ||
                 detail.Contains("elevation", StringComparison.OrdinalIgnoreCase);
 
@@ -328,7 +401,7 @@ if(-not $existing) {{
             throw new InvalidOperationException(
                 string.IsNullOrWhiteSpace(detail)
                     ? "Die Windows-Druckerfreigabe konnte nicht verbunden werden."
-                    : detail);
+                    : CleanError(detail));
         }
     }
 
@@ -590,19 +663,30 @@ if($existing) {{
         {
             var shareScript = $@"
 $connection={PowerShellRunner.Quote(mapping.DirectAddress)}
-$p = Get-Printer -Name $connection -ErrorAction SilentlyContinue
+$shareName = $connection.Substring($connection.LastIndexOf('\') + 1)
+
+function Find-ShareConnection {{
+  @(Get-Printer -ErrorAction SilentlyContinue | Where-Object {{
+    ([string]$_.Name -ieq $connection) -or
+    (([string]$_.Name).StartsWith('\\') -and
+     ([string]$_.Name).EndsWith('\' + $shareName, [System.StringComparison]::OrdinalIgnoreCase))
+  }}) | Select-Object -First 1
+}}
+
+$p = Find-ShareConnection
 if($p) {{
-  Remove-Printer -Name $connection -ErrorAction SilentlyContinue
+  $name = [string]$p.Name
+  Remove-Printer -Name $name -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 400
-}}
 
-if(Get-Printer -Name $connection -ErrorAction SilentlyContinue) {{
-  & rundll32.exe printui.dll,PrintUIEntry /dn /n $connection
-  Start-Sleep -Milliseconds 400
-}}
+  if(Find-ShareConnection) {{
+    & rundll32.exe printui.dll,PrintUIEntry /dn /n $name
+    Start-Sleep -Milliseconds 400
+  }}
 
-if(Get-Printer -Name $connection -ErrorAction SilentlyContinue) {{
-  throw ('Die verbundene Server-Druckerqueue konnte nicht entfernt werden: ' + $connection)
+  if(Find-ShareConnection) {{
+    throw ('Die verbundene Server-Druckerqueue konnte nicht entfernt werden: ' + $connection)
+  }}
 }}
 ";
             return RunWithElevationIfRequiredAsync(shareScript);
@@ -678,6 +762,13 @@ $address={PowerShellRunner.Quote(mapping.DirectAddress)}
 $deviceUuid={PowerShellRunner.Quote(mapping.DeviceUuid)}
 $adopted={(mapping.UseExistingQueue ? "$true" : "$false")}
 $p = Get-Printer -Name $printer -ErrorAction SilentlyContinue
+if(-not $p -and $printer.StartsWith('\\')) {{
+  $shareName = $printer.Substring($printer.LastIndexOf('\') + 1)
+  $p = @(Get-Printer -ErrorAction SilentlyContinue | Where-Object {{
+    ([string]$_.Name).StartsWith('\\') -and
+    ([string]$_.Name).EndsWith('\' + $shareName, [System.StringComparison]::OrdinalIgnoreCase)
+  }}) | Select-Object -First 1
+}}
 $problems = @()
 if(-not $p) {{ $problems += 'Direkte Windows-Druckerqueue fehlt.' }}
 
