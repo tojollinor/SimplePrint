@@ -74,13 +74,16 @@ internal static class RawPrinter
     private static extern bool EndDocPrinter(IntPtr hPrinter);
 
     [DllImport("winspool.drv", SetLastError = true)]
+    private static extern bool AbortPrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", SetLastError = true)]
     private static extern bool StartPagePrinter(IntPtr hPrinter);
 
     [DllImport("winspool.drv", SetLastError = true)]
     private static extern bool EndPagePrinter(IntPtr hPrinter);
 
     [DllImport("winspool.drv", SetLastError = true)]
-    private static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
+    private static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, int dwCount, out int dwWritten);
 
     [DllImport("winspool.drv", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool GetJob(
@@ -117,6 +120,7 @@ internal static class RawPrinter
 
         var docStarted = false;
         var pageStarted = false;
+        var completed = false;
         uint spoolerJobId = 0;
 
         try
@@ -138,42 +142,43 @@ internal static class RawPrinter
 
             long total = 0;
 
-            void WriteChunk(byte[] data, int count)
+            void WriteChunk(int count)
             {
-                var ptr = Marshal.AllocHGlobal(count);
-                try
-                {
-                    Marshal.Copy(data, 0, ptr, count);
+                if (!WritePrinter(printer, buffer, count, out var written) || written != count)
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        $"WritePrinter fehlgeschlagen ({written}/{count} Byte).");
 
-                    if (!WritePrinter(printer, ptr, count, out var written) || written != count)
-                        throw new Win32Exception(
-                            Marshal.GetLastWin32Error(),
-                            $"WritePrinter fehlgeschlagen ({written}/{count} Byte).");
-
-                    total += written;
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(ptr);
-                }
+                total += written;
             }
 
-            WriteChunk(buffer, firstRead);
+            WriteChunk(firstRead);
 
             while (true)
             {
                 var read = await source.ReadAsync(buffer, ct);
                 if (read == 0) break;
 
-                WriteChunk(buffer, read);
+                WriteChunk(read);
             }
 
+            completed = true;
             return new RawPrintResult(total, spoolerJobId);
         }
         finally
         {
-            if (pageStarted) EndPagePrinter(printer);
-            if (docStarted) EndDocPrinter(printer);
+            if (completed)
+            {
+                if (pageStarted) EndPagePrinter(printer);
+                if (docStarted) EndDocPrinter(printer);
+            }
+            else if (docStarted)
+            {
+                // Abgebrochene Übertragung: Auftrag verwerfen statt halbe Daten
+                // (Zeichensalat) auszudrucken.
+                AbortPrinter(printer);
+            }
+
             ClosePrinter(printer);
         }
     }
