@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Stop-And-DeleteService([string]$Name) {
+function Stop-ServiceIfPresent([string]$Name) {
   $service = Get-Service -Name $Name -ErrorAction SilentlyContinue
   if (-not $service) { return }
 
@@ -12,8 +12,12 @@ function Stop-And-DeleteService([string]$Name) {
     Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue
     try { $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10)) } catch {}
   }
+}
 
-  & sc.exe delete $Name | Out-Null
+function Delete-ServiceIfPresent([string]$Name) {
+  if (Get-Service -Name $Name -ErrorAction SilentlyContinue) {
+    & sc.exe delete $Name | Out-Null
+  }
 }
 
 function Ensure-Service(
@@ -56,8 +60,8 @@ function Read-Json([string]$Path) {
 Get-Process -Name 'SimplePrint.Client.Gui','SimplePrint.Server.Gui' -ErrorAction SilentlyContinue |
   Stop-Process -Force -ErrorAction SilentlyContinue
 
-Stop-And-DeleteService 'SimplePrintServer'
-Stop-And-DeleteService 'SimplePrintClient'
+Stop-ServiceIfPresent 'SimplePrintServer'
+Stop-ServiceIfPresent 'SimplePrintClient'
 
 $unified = Get-Service -Name 'SimplePrint' -ErrorAction SilentlyContinue
 if ($unified -and $unified.Status -ne 'Stopped') {
@@ -174,11 +178,6 @@ if (-not (Test-Path -LiteralPath $serviceExe)) {
 
 Ensure-Service 'SimplePrint' 'SimplePrint' $serviceExe 'Stellt lokale Drucker bereit, findet andere SimplePrint-Geräte und verarbeitet ein- und ausgehende Druckaufträge.'
 
-$runKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
-foreach ($name in @('SimplePrintServerGui','SimplePrintClientGui')) {
-  Remove-ItemProperty -Path $runKey -Name $name -ErrorAction SilentlyContinue
-}
-
 Start-Service -Name 'SimplePrint' -ErrorAction Stop
 (Get-Service -Name 'SimplePrint').WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
 
@@ -189,6 +188,16 @@ for ($i = 0; $i -lt 40; $i++) {
 
 if (-not (Test-Path -LiteralPath $deviceConfigPath)) {
   throw 'Die gemeinsame SimplePrint-Konfiguration konnte nicht erstellt bzw. migriert werden. Alte Komponenten werden deshalb nicht bereinigt.'
+}
+
+# Erst ab hier ist die gemeinsame Installation bestätigt. Alte Komponenten werden
+# nun endgültig entfernt.
+Delete-ServiceIfPresent 'SimplePrintServer'
+Delete-ServiceIfPresent 'SimplePrintClient'
+
+$runKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+foreach ($name in @('SimplePrintServerGui','SimplePrintClientGui')) {
+  Remove-ItemProperty -Path $runKey -Name $name -ErrorAction SilentlyContinue
 }
 
 foreach ($legacyDir in @(
