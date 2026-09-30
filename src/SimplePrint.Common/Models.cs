@@ -178,6 +178,7 @@ public sealed class LocalPrinterInfo
     public string DriverName { get; set; } = "";
     public string PortName { get; set; } = "";
     public string PrinterStatus { get; set; } = "";
+    public string Comment { get; set; } = "";
     public string TransportMode { get; set; } = PrinterTransport.Tunnel;
     public string DirectAddress { get; set; } = "";
     public string DeviceUuid { get; set; } = "";
