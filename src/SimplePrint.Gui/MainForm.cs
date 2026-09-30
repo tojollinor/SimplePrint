@@ -51,6 +51,7 @@ public sealed class MainForm : Form
     private SimplePrintConfig _config = new();
     private List<DevicePresence> _peers = [];
     private bool _allowExit;
+    private bool _suppressNetworkTreeCheck;
 
     public MainForm()
     {
@@ -87,6 +88,25 @@ public sealed class MainForm : Form
         };
 
         _tray.DoubleClick += (_, _) => ShowFromTray();
+
+        _networkPrinters.AfterCheck += (_, e) =>
+        {
+            if (_suppressNetworkTreeCheck ||
+                e.Node.Tag is not DevicePresence)
+            {
+                return;
+            }
+
+            _suppressNetworkTreeCheck = true;
+            try
+            {
+                e.Node.Checked = false;
+            }
+            finally
+            {
+                _suppressNetworkTreeCheck = false;
+            }
+        };
 
         Resize += (_, _) =>
         {
