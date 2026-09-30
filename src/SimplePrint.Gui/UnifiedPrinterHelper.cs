@@ -84,6 +84,7 @@ $items = @(Get-Printer | ForEach-Object {
     DriverName = [string]$p.DriverName
     PortName = [string]$p.PortName
     PrinterStatus = [string]$p.PrinterStatus
+    Comment = [string]$p.Comment
     TransportMode = $transportMode
     DirectAddress = $directAddress
     DeviceUuid = $deviceUuid
@@ -130,6 +131,8 @@ ConvertTo-Json -InputObject $items -Compress
     }
 
     public static bool IsUnsafeSimplePrintLoop(LocalPrinterInfo printer) =>
+        (!string.IsNullOrWhiteSpace(printer.Comment) &&
+         printer.Comment.StartsWith("SimplePrint:", StringComparison.OrdinalIgnoreCase)) ||
         PrinterTransport.IsSimplePrintPort(printer.PortName) ||
         PrinterTransport.IsLoopbackProxy(
             printer.PrinterHostAddress,
