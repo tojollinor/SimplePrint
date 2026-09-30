@@ -20,6 +20,11 @@ internal sealed class ReusableDirectPrinter
 
 internal static class PrinterInstaller
 {
+    // Merkt sich, warum die direkte Verbindung (IPP/WSD) zuletzt für einen Drucker
+    // gescheitert ist, damit beim Wechsel auf die Windows-Freigabe erklärt werden kann,
+    // was passiert ist.
+    private static (Guid SourceDeviceId, Guid PrinterId, string Mode, string Reason)? _lastDirectFailure;
+
     private static async Task RunWithElevationIfRequiredAsync(string script)
     {
         var result = await PowerShellRunner.RunAsync(script);
@@ -53,6 +58,57 @@ internal static class PrinterInstaller
             string.IsNullOrWhiteSpace(detail)
                 ? "Windows konnte die Druckeraktion nicht ausführen."
                 : detail);
+    }
+
+    private static bool IsCredentialError(string detail) =>
+        detail.Contains("0x8007052e", StringComparison.OrdinalIgnoreCase) ||
+        detail.Contains("alternative Benutzeranmeldeinformationen", StringComparison.OrdinalIgnoreCase) ||
+        detail.Contains("Logon failure", StringComparison.OrdinalIgnoreCase) ||
+        detail.Contains("Anmeldefehler", StringComparison.OrdinalIgnoreCase);
+
+    // \\192.168.1.10\SimplePrint-abcd1234 -> 192.168.1.10
+    private static string GetShareServer(string sharePath)
+    {
+        var trimmed = (sharePath ?? "").TrimStart('\\');
+        var index = trimmed.IndexOf('\\');
+        return index > 0 ? trimmed[..index] : trimmed;
+    }
+
+    private static string Shorten(string text, int max = 350)
+    {
+        var singleLine = string.Join(
+            " ",
+            (text ?? "").Split(
+                ['\r', '\n'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+        return singleLine.Length <= max
+            ? singleLine
+            : singleLine[..max] + " …";
+    }
+
+    // Erklärt dem Benutzer, dass die direkte Verbindung nicht funktioniert hat
+    // und jetzt die Windows-Freigabe versucht wird.
+    private static void AnnounceShareFallback(NetworkPrinterMapping mapping)
+    {
+        if (_lastDirectFailure is not { } failure ||
+            failure.SourceDeviceId != mapping.SourceDeviceId ||
+            failure.PrinterId != mapping.PrinterId)
+        {
+            return;
+        }
+
+        _lastDirectFailure = null;
+
+        ShareCredentialPrompt.Notify(
+            $"Bei '{mapping.PrinterDisplayName}' (Server '{mapping.SourceDeviceName}') hat die direkte " +
+            $"{failure.Mode.ToUpperInvariant()}-Verbindung nicht funktioniert:\r\n\r\n" +
+            $"{Shorten(failure.Reason)}\r\n\r\n" +
+            "Es wird jetzt die Windows-Druckerfreigabe des Servers versucht:\r\n" +
+            $"{mapping.DirectAddress}\r\n\r\n" +
+            "Falls diese eine Anmeldung verlangt, kannst du im nächsten Schritt Zugangsdaten eingeben.",
+            "SimplePrint – Ersatzverbindung",
+            MessageBoxIcon.Information);
     }
 
     public static async Task<List<string>> GetDriverNamesAsync()
@@ -211,58 +267,80 @@ if(-not $existing) {{
 }}
 ";
 
-        var normal = await PowerShellRunner.RunAsync(shareScript);
-        if (normal.ExitCode == 0)
-            return;
+        AnnounceShareFallback(mapping);
 
-        var detail = string.Join(
-            Environment.NewLine,
-            new[] { normal.StdErr, normal.StdOut }
-                .Where(x => !string.IsNullOrWhiteSpace(x)))
-            .Trim();
-
-        var credentialError =
-            detail.Contains("0x8007052e", StringComparison.OrdinalIgnoreCase) ||
-            detail.Contains("alternative Benutzeranmeldeinformationen", StringComparison.OrdinalIgnoreCase) ||
-            detail.Contains("Logon failure", StringComparison.OrdinalIgnoreCase) ||
-            detail.Contains("Anmeldefehler", StringComparison.OrdinalIgnoreCase);
-
-        if (credentialError)
+        for (var attempt = 1; ; attempt++)
         {
+            var normal = await PowerShellRunner.RunAsync(shareScript);
+            if (normal.ExitCode == 0)
+                return;
+
+            var detail = string.Join(
+                Environment.NewLine,
+                new[] { normal.StdErr, normal.StdOut }
+                    .Where(x => !string.IsNullOrWhiteSpace(x)))
+                .Trim();
+
+            if (IsCredentialError(detail))
+            {
+                // Kein Admin-Problem: Der Server verlangt eine Windows-Anmeldung.
+                // Zugangsdaten abfragen (bis zu dreimal), speichern und erneut versuchen.
+                var server = GetShareServer(mapping.DirectAddress);
+
+                var credentials = attempt <= 3
+                    ? ShareCredentialPrompt.Ask(
+                        server,
+                        mapping.PrinterDisplayName,
+                        mapping.SourceDeviceName,
+                        attempt > 1)
+                    : null;
+
+                if (credentials is null)
+                {
+                    throw new InvalidOperationException(
+                        "Die Windows-Druckerfreigabe des SimplePrint-Servers verlangt Netzwerk-Anmeldedaten, " +
+                        "es wurden aber keine gültigen Zugangsdaten eingegeben.\r\n\r\n" +
+                        "Mögliche Lösungen:\r\n" +
+                        "• Auf dem Server \"Kennwortgeschütztes Freigeben\" ausschalten " +
+                        "(Netzwerk- und Freigabecenter → Erweiterte Freigabeeinstellungen).\r\n" +
+                        "• Oder ein Konto mit Passwort auf dem Server verwenden und die " +
+                        "Zugangsdaten beim nächsten Versuch eingeben.\r\n\r\n" +
+                        detail);
+                }
+
+                ShareCredentialStore.Save(server, credentials.UserName, credentials.Password);
+                continue;
+            }
+
+            var elevationLikelyRequired =
+                detail.Contains("0x80070005", StringComparison.OrdinalIgnoreCase) ||
+                detail.Contains("Zugriff verweigert", StringComparison.OrdinalIgnoreCase) ||
+                detail.Contains("Access is denied", StringComparison.OrdinalIgnoreCase) ||
+                detail.Contains("Administrator", StringComparison.OrdinalIgnoreCase) ||
+                detail.Contains("elevation", StringComparison.OrdinalIgnoreCase);
+
+            if (elevationLikelyRequired)
+            {
+                await PrivilegeHelper.RunPowerShellElevatedAsync(shareScript);
+                return;
+            }
+
             throw new InvalidOperationException(
-                "Die Windows-Druckerfreigabe des SimplePrint-Servers verlangt Netzwerk-Anmeldedaten. " +
-                "Das ist kein lokales Administratorproblem und würde durch eine weitere UAC-Abfrage nicht behoben. " +
-                "SimplePrint hat deshalb keinen unnötigen zweiten Admin-Prompt geöffnet.\r\n\r\n" +
-                detail);
+                string.IsNullOrWhiteSpace(detail)
+                    ? "Die Windows-Druckerfreigabe konnte nicht verbunden werden."
+                    : detail);
         }
-
-        var elevationLikelyRequired =
-            detail.Contains("0x80070005", StringComparison.OrdinalIgnoreCase) ||
-            detail.Contains("Zugriff verweigert", StringComparison.OrdinalIgnoreCase) ||
-            detail.Contains("Access is denied", StringComparison.OrdinalIgnoreCase) ||
-            detail.Contains("Administrator", StringComparison.OrdinalIgnoreCase) ||
-            detail.Contains("elevation", StringComparison.OrdinalIgnoreCase);
-
-        if (elevationLikelyRequired)
-        {
-            await PrivilegeHelper.RunPowerShellElevatedAsync(shareScript);
-            return;
-        }
-
-        throw new InvalidOperationException(
-            string.IsNullOrWhiteSpace(detail)
-                ? "Die Windows-Druckerfreigabe konnte nicht verbunden werden."
-                : detail);
     }
 
-    public static Task InstallAsync(NetworkPrinterMapping mapping)
+    public static async Task InstallAsync(NetworkPrinterMapping mapping)
     {
         if (string.Equals(
                 mapping.TransportMode,
                 PrinterTransport.WindowsShare,
                 StringComparison.OrdinalIgnoreCase))
         {
-            return InstallWindowsShareAsync(mapping);
+            await InstallWindowsShareAsync(mapping);
+            return;
         }
 
         if (PrinterTransport.IsDirect(mapping.TransportMode))
@@ -275,7 +353,8 @@ if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{
   throw ('Die übernommene Windows-Druckerqueue ' + $printer + ' wurde nicht gefunden.')
 }}
 ";
-                return RunWithElevationIfRequiredAsync(verifyExistingScript);
+                await RunWithElevationIfRequiredAsync(verifyExistingScript);
+                return;
             }
 
             var directScript = $@"
@@ -459,7 +538,24 @@ if(-not (Get-Printer -Name $printer -ErrorAction SilentlyContinue)) {{
   throw 'Windows hat die direkte Druckerqueue nicht angelegt.'
 }}
 ";
-            return RunWithElevationIfRequiredAsync(directScript);
+
+            try
+            {
+                await RunWithElevationIfRequiredAsync(directScript);
+                _lastDirectFailure = null;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _lastDirectFailure = (
+                    mapping.SourceDeviceId,
+                    mapping.PrinterId,
+                    mapping.TransportMode,
+                    ex.Message);
+
+                throw;
+            }
+
+            return;
         }
 
         var script = $@"
@@ -482,7 +578,7 @@ if($existing) {{
   Add-Printer -Name $printer -DriverName $driver -PortName $port
 }}
 ";
-        return RunWithElevationIfRequiredAsync(script);
+        await RunWithElevationIfRequiredAsync(script);
     }
 
     public static Task RemoveAsync(NetworkPrinterMapping mapping)
