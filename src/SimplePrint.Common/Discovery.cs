@@ -6,6 +6,64 @@ namespace SimplePrint.Common;
 
 public static class Discovery
 {
+    public static async Task<IReadOnlyList<DiscoveredDevice>> DiscoverDevicesAsync(
+        int port = Protocol.DefaultDiscoveryPort,
+        int waitMs = 900,
+        CancellationToken ct = default,
+        IEnumerable<string>? manualPeers = null)
+    {
+        var found = new Dictionary<Guid, DiscoveredDevice>();
+        var targets = new HashSet<IPAddress>(await GetTargetsAsync(null));
+
+        if (manualPeers is not null)
+        {
+            foreach (var peer in manualPeers.Where(x => !string.IsNullOrWhiteSpace(x)))
+            {
+                foreach (var target in await ResolveManualTargetAsync(peer))
+                    targets.Add(target);
+            }
+        }
+
+        using var udp = new UdpClient(new IPEndPoint(IPAddress.Any, 0)) { EnableBroadcast = true };
+
+        foreach (var target in targets)
+        {
+            try
+            {
+                await udp.SendAsync(
+                    Protocol.DeviceDiscoveryRequestBytes,
+                    new IPEndPoint(target, port),
+                    ct);
+            }
+            catch (SocketException) { }
+        }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(waitMs);
+
+        while (!deadline.IsCancellationRequested)
+        {
+            try
+            {
+                var result = await udp.ReceiveAsync(deadline.Token);
+                var announcement = Protocol.DeserializeDeviceAnnouncement(result.Buffer);
+                if (announcement is null || announcement.DeviceId == Guid.Empty)
+                    continue;
+
+                found[announcement.DeviceId] = new DiscoveredDevice(
+                    announcement,
+                    result.RemoteEndPoint.Address,
+                    DateTimeOffset.Now);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (SocketException) { break; }
+        }
+
+        return found.Values
+            .OrderBy(x => x.Announcement.DeviceName)
+            .ToList();
+    }
+
     public static async Task<IReadOnlyList<DiscoveredServer>> DiscoverAsync(
         int port = Protocol.DefaultDiscoveryPort,
         int waitMs = 900,
@@ -67,6 +125,31 @@ public static class Discovery
             }
             catch (SocketException) { }
         }
+    }
+
+    private static async Task<IReadOnlyList<IPAddress>> ResolveManualTargetAsync(string manualHost)
+    {
+        var targets = new List<IPAddress>();
+        var host = manualHost.Trim();
+
+        if (IPAddress.TryParse(host, out var direct) &&
+            direct.AddressFamily == AddressFamily.InterNetwork)
+        {
+            targets.Add(direct);
+            return targets;
+        }
+
+        try
+        {
+            foreach (var address in await Dns.GetHostAddressesAsync(host))
+            {
+                if (address.AddressFamily == AddressFamily.InterNetwork)
+                    targets.Add(address);
+            }
+        }
+        catch { }
+
+        return targets;
     }
 
     private static async Task<IReadOnlyList<IPAddress>> GetTargetsAsync(string? manualHost)
