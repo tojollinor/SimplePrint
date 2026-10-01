@@ -4,8 +4,9 @@ using System.Security.Principal;
 namespace SimplePrint.Common;
 
 /// <summary>
-/// Ablage der PDF-Druckaufträge. Der Ordner ist nur für SYSTEM und Administratoren
-/// zugänglich, weil die PDFs ungeschützt gespeichert werden.
+/// Ablage der PDF-Druckaufträge. Den Inhalt der Dateien können nur SYSTEM und
+/// Administratoren lesen, weil die PDFs ungeschützt gespeichert werden. Normale
+/// Benutzer sehen lediglich die Dateinamen.
 /// </summary>
 public static class PdfStore
 {
@@ -130,6 +131,18 @@ public static class PdfStore
                 PropagationFlags.None,
                 AccessControlType.Allow));
         }
+
+        // Normale Benutzer dürfen nur die Dateinamen sehen (damit die Oberfläche weiß,
+        // zu welchem Auftrag eine PDF existiert), nicht den Inhalt lesen. Die Regel gilt
+        // nur für den Ordner selbst und wird nicht an die Dateien vererbt.
+        security.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+            FileSystemRights.ListDirectory |
+            FileSystemRights.Traverse |
+            FileSystemRights.ReadAttributes,
+            InheritanceFlags.None,
+            PropagationFlags.None,
+            AccessControlType.Allow));
 
         new DirectoryInfo(dir).SetAccessControl(security);
     }

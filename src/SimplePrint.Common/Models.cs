@@ -37,6 +37,13 @@ public sealed class NetworkPrinterMapping
     public string DirectAddress { get; set; } = "";
     public string DeviceUuid { get; set; } = "";
     public bool UseExistingQueue { get; set; }
+
+    /// <summary>
+    /// Die Windows-Queue verwendet den Treiber "Microsoft Print To PDF"; Dokumente
+    /// gehen als PDF an den Server und werden dort mit dessen Treiber gedruckt.
+    /// </summary>
+    public bool UsePdf { get; set; }
+
     public bool Enabled { get; set; } = true;
 }
 

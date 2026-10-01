@@ -70,7 +70,20 @@ public static class PowerShellRunner
                  $"Zeitüberschreitung: Die Windows-Aktion wurde nach {limit.TotalSeconds:0} s abgebrochen.").Trim());
         }
 
-        return (p.ExitCode, await stdout, await stderr);
+        var output = await stdout;
+        var error = await stderr;
+
+        // Endet PowerShell mit einem Fehlercode, ohne etwas auf stderr auszugeben,
+        // wäre die Ursache sonst nirgends erkennbar (z. B. im Dienst-Log).
+        if (p.ExitCode != 0 && string.IsNullOrWhiteSpace(error))
+        {
+            error = $"Die PowerShell-Aktion endete mit Exitcode {p.ExitCode}.";
+
+            if (!string.IsNullOrWhiteSpace(output))
+                error += " Ausgabe: " + output.Trim();
+        }
+
+        return (p.ExitCode, output, error);
     }
 
     public static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
