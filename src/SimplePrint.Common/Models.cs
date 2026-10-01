@@ -11,6 +11,13 @@ public sealed class SimplePrintConfig
     public int DiagnosticsPort { get; set; } = Protocol.DefaultDiagnosticsPort;
     public int LocalPortStart { get; set; } = 19100;
     public int LocalPortEnd { get; set; } = 19999;
+
+    /// <summary>
+    /// Wie viele Tage PDF-Druckaufträge auf diesem Gerät aufbewahrt werden.
+    /// 0 = nach dem Druck sofort löschen.
+    /// </summary>
+    public int PdfRetentionDays { get; set; } = 30;
+
     public List<string> ManualPeers { get; set; } = [];
     public List<SharedPrinterConfig> SharedPrinters { get; set; } = [];
     public List<NetworkPrinterMapping> NetworkPrinters { get; set; } = [];
