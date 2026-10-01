@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using SimplePrint.Common;
 
 namespace SimplePrint.Service;
 
@@ -94,6 +95,21 @@ internal static class RawPrinter
         uint cbBuf,
         out uint pcbNeeded);
 
+    [DllImport("winspool.drv", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool EnumJobs(
+        IntPtr hPrinter,
+        uint firstJob,
+        uint noJobs,
+        uint level,
+        IntPtr pJob,
+        uint cbBuf,
+        out uint pcbNeeded,
+        out uint pcReturned);
+
+    // Platzhalter-ID, wenn ein PDF-Auftrag so schnell gedruckt wurde, dass er
+    // beim Nachschlagen schon nicht mehr in der Warteschlange stand.
+    private const uint JobAlreadyFinished = uint.MaxValue;
+
     public static bool CanOpen(string queueName)
     {
         if (!OpenPrinter(queueName, out var h, IntPtr.Zero)) return false;
@@ -114,6 +130,19 @@ internal static class RawPrinter
         // Windows-Spoolerauftrag anlegen.
         if (firstRead == 0)
             return new RawPrintResult(0, 0);
+
+        // Die ersten Bytes entscheiden den Druckweg: Eine PDF (z. B. vom
+        // "Microsoft Print to PDF"-Treiber des Clients) wird gespeichert und über
+        // den Treiber dieses Servers gedruckt, alles andere geht unverändert als RAW.
+        while (firstRead < PdfMagic.Length)
+        {
+            var more = await source.ReadAsync(buffer.AsMemory(firstRead), ct);
+            if (more == 0) break;
+            firstRead += more;
+        }
+
+        if (IsPdf(buffer, firstRead))
+            return await SendPdfAsync(queueName, buffer, firstRead, source, documentName, ct);
 
         if (!OpenPrinter(queueName, out var printer, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), $"Drucker '{queueName}' konnte nicht geöffnet werden.");
@@ -179,6 +208,134 @@ internal static class RawPrinter
                 AbortPrinter(printer);
             }
 
+            ClosePrinter(printer);
+        }
+    }
+
+    private static readonly byte[] PdfMagic = "%PDF-"u8.ToArray();
+
+    private static bool IsPdf(byte[] buffer, int length) =>
+        length >= PdfMagic.Length &&
+        buffer.AsSpan(0, PdfMagic.Length).SequenceEqual(PdfMagic);
+
+    private static async Task<RawPrintResult> SendPdfAsync(
+        string queueName,
+        byte[] first,
+        int firstLength,
+        Stream source,
+        string documentName,
+        CancellationToken ct)
+    {
+        var retentionDays = PdfStore.GetRetentionDays();
+        var folder = PdfStore.EnsureFolder();
+        var path = Path.Combine(folder, PdfStore.FileNameFor(documentName));
+
+        PdfStore.CleanupIfDue(retentionDays);
+
+        long total = 0;
+
+        try
+        {
+            await using (var file = new FileStream(
+                             path,
+                             FileMode.Create,
+                             FileAccess.Write,
+                             FileShare.Read,
+                             64 * 1024,
+                             useAsync: true))
+            {
+                await file.WriteAsync(first.AsMemory(0, firstLength), ct);
+                total = firstLength;
+
+                var chunk = new byte[64 * 1024];
+                while (true)
+                {
+                    var read = await source.ReadAsync(chunk, ct);
+                    if (read == 0) break;
+
+                    total += read;
+                    if (total > PdfStore.MaxPdfBytes)
+                        throw new InvalidDataException(
+                            "Die PDF-Datei ist größer als 100 MB und wird nicht gedruckt.");
+
+                    await file.WriteAsync(chunk.AsMemory(0, read), ct);
+                }
+            }
+
+            await PdfPrinter.PrintAsync(queueName, path, documentName, ct);
+        }
+        catch
+        {
+            // Unvollständige oder nicht druckbare Dateien nicht aufbewahren.
+            PdfStore.TryDelete(path);
+            throw;
+        }
+
+        var spoolerJobId = await FindJobIdAsync(queueName, documentName, ct);
+
+        if (retentionDays == 0)
+            PdfStore.TryDelete(path);
+
+        return new RawPrintResult(total, spoolerJobId);
+    }
+
+    private static async Task<uint> FindJobIdAsync(
+        string queueName,
+        string documentName,
+        CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var id = FindJobIdByDocument(queueName, documentName);
+            if (id != 0) return id;
+
+            await Task.Delay(300, ct);
+        }
+
+        return JobAlreadyFinished;
+    }
+
+    private static uint FindJobIdByDocument(string queueName, string documentName)
+    {
+        if (!OpenPrinter(queueName, out var printer, IntPtr.Zero))
+            return 0;
+
+        try
+        {
+            _ = EnumJobs(printer, 0, 256, 1, IntPtr.Zero, 0, out var needed, out _);
+            if (needed == 0) return 0;
+
+            var buffer = Marshal.AllocHGlobal((int)needed);
+            try
+            {
+                if (!EnumJobs(printer, 0, 256, 1, buffer, needed, out _, out var returned))
+                    return 0;
+
+                var itemSize = Marshal.SizeOf<JOB_INFO_1>();
+                uint found = 0;
+
+                for (var i = 0; i < returned; i++)
+                {
+                    var info = Marshal.PtrToStructure<JOB_INFO_1>(
+                        IntPtr.Add(buffer, i * itemSize));
+
+                    var document = info.pDocument == IntPtr.Zero
+                        ? ""
+                        : Marshal.PtrToStringUni(info.pDocument) ?? "";
+
+                    if (string.Equals(document, documentName, StringComparison.Ordinal))
+                        found = Math.Max(found, info.JobId);
+                }
+
+                return found;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        finally
+        {
             ClosePrinter(printer);
         }
     }
