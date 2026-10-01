@@ -9,6 +9,7 @@ public static class AppPaths
     public static string DeviceConfig => Path.Combine(DeviceRoot, "config.json");
     public static string DeviceLog => Path.Combine(DeviceRoot, "simpleprint.log");
     public static string DeviceJobs => Path.Combine(DeviceRoot, "jobs.json");
+    public static string DevicePdfs => Path.Combine(DeviceRoot, "Pdfs");
     public static string DevicePeers => Path.Combine(DeviceRoot, "peers.json");
     public static string ServerConfig => Path.Combine(ServerRoot, "config.json");
     public static string ClientConfig => Path.Combine(ClientRoot, "config.json");
