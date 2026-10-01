@@ -17,7 +17,21 @@ public sealed partial class MainForm
         _jobs.Columns.Add("printer", "Drucker");
         _jobs.Columns.Add("status", "Status");
         _jobs.Columns.Add("bytes", "Bytes");
+        _jobs.Columns.Add("pdf", "PDF");
         _jobs.Columns.Add("message", "Meldung");
+        _jobs.ContextMenuStrip = BuildJobsMenu();
+        _jobs.MouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Right)
+                return;
+
+            var hit = _jobs.HitTest(e.X, e.Y);
+            if (hit.RowIndex >= 0)
+            {
+                _jobs.ClearSelection();
+                _jobs.Rows[hit.RowIndex].Selected = true;
+            }
+        };
 
         var info = new Label
         {
@@ -42,6 +56,39 @@ public sealed partial class MainForm
         tab.Controls.Add(info);
         tab.Controls.Add(buttons);
         return tab;
+    }
+
+    private ContextMenuStrip BuildJobsMenu()
+    {
+        var menu = new ContextMenuStrip();
+
+        var openPdf = new ToolStripMenuItem(
+            "PDF öffnen",
+            null,
+            async (_, _) =>
+            {
+                if (_jobs.SelectedRows.Count > 0 &&
+                    _jobs.SelectedRows[0].Tag is PrintJobRecord job &&
+                    JobHasPdf(job))
+                {
+                    await OpenJobPdfAsync(job);
+                }
+            });
+
+        menu.Items.Add(openPdf);
+
+        menu.Opening += (_, e) =>
+        {
+            var hasPdf =
+                _jobs.SelectedRows.Count > 0 &&
+                _jobs.SelectedRows[0].Tag is PrintJobRecord job &&
+                JobHasPdf(job);
+
+            if (!hasPdf)
+                e.Cancel = true;
+        };
+
+        return menu;
     }
 
     private void ClearCompletedJobs()
@@ -130,7 +177,10 @@ public sealed partial class MainForm
                     job.PrinterName,
                     job.Status,
                     job.Bytes.ToString("N0"),
+                    JobHasPdf(job) ? "PDF" : "",
                     job.Message);
+
+                _jobs.Rows[index].Tag = job;
 
                 var statusCell = _jobs.Rows[index].Cells["status"];
 
